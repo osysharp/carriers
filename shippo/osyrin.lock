@@ -1,0 +1,26 @@
+{
+  "platform": {
+    "version": "0.9.0"
+  },
+  "entries": [
+    {
+      "name": "Osysharp.Delivery",
+      "kind": "package",
+      "version": "0.1.0",
+      "hash": "sha256:4938c793fe6765bd64250b643f00e8b83fc09cbfed0f16a42052c2446b721f9a",
+      "minPlatform": "0.9.0",
+      "shadow": "app-forkable",
+      "source": "workspace:kits/delivery",
+      "constraint": "0"
+    },
+    {
+      "name": "Osysharp.Http",
+      "kind": "package",
+      "version": "1.0.0",
+      "hash": "sha256:4c24068aeea5ef1a155459d4cc332c85d7ee3d96049f2404e54ac860d94beb0f",
+      "minPlatform": "0.9.0",
+      "shadow": "app-forkable",
+      "source": "workspace:Platform.Core/Dsl/OsySharp/Baseline/Capabilities/Http"
+    }
+  ]
+}

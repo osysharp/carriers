@@ -1,0 +1,102 @@
+// Shippo as a delivery provider, against a stubbed Shippo: the label it buys, and how it reads the answers.
+
+using Osysharp.Delivery;
+using Osysharp.Http;
+using Osysharp.Carriers.Shippo;
+
+ShippoDelivery Carrier() {
+  return new ShippoDelivery { ApiKey = "shippo_test_k", SenderRegion = "CA", CustomsSigner = "Sam Shop",
+    Sender = new DeliveryAddress { Name = "Shop", Street = "1 Market St", PostCode = "94105", City = "San Francisco", Country = "US" },
+    Options = [ new ShippoOption { Id = "usps-priority", Label = "USPS Priority", CarrierAccount = "ca_1", ServiceLevel = "usps_priority",
+                                   Carrier = "usps", Price = 899, Countries = ["US", "CA"] } ] };
+}
+
+string Bought(string status) {
+  return "{\"object_id\":\"t_1\",\"status\":\"" + status + "\",\"tracking_number\":\"9400111\","
+    + "\"tracking_url_provider\":\"https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111\","
+    + "\"label_url\":\"https://shippo-delivery.s3.amazonaws.com/label.pdf\","
+    + "\"messages\":[{\"source\":\"USPS\",\"code\":\"x\",\"text\":\"Address not deliverable\"}]}";
+}
+
+[Test]
+void it_offers_the_shops_options_where_they_go() {
+  Assert.Equal(["usps-priority"], Carrier().Quote(new DeliveryQuoteRequest { To = new DeliveryAddress { Country = "us" } }).Select(o => o.Id).ToList());
+  Assert.Empty(Carrier().Quote(new DeliveryQuoteRequest { To = new DeliveryAddress { Country = "SE" } }));
+}
+
+[Test]
+void shipping_buys_the_label_in_one_call_and_answers_number_link_and_pdf() {
+  var bodies = new List<string>();
+  Http.Post.Stub((url, body, headers) => {
+    Assert.Equal("https://api.goshippo.com/transactions", url);
+    Assert.Equal("ShippoToken shippo_test_k", headers["Authorization"]);
+    bodies.Add(body);
+    return new HttpResponse { StatusCode = 201, Body = Bought("SUCCESS") };
+  });
+  Http.Get.Stub(url => new HttpResponse { StatusCode = 200, Body = "%PDF-1", Bytes = Text.ToBytes("%PDF-1") });
+  var s = Carrier().Ship(new ShipmentRequest { Reference = "RC-1042", OptionId = "usps-priority", WeightGrams = 900,
+    To = new DeliveryAddress { Name = "Ann Lee", Street = "5 Main St", PostCode = "10001", City = "New York", Country = "US" } });
+  Assert.Contains("\"carrier_account\":\"ca_1\"", bodies[0]);
+  Assert.Contains("\"servicelevel_token\":\"usps_priority\"", bodies[0]);
+  Assert.Contains("\"label_file_type\":\"PDF\"", bodies[0]);
+  Assert.Contains("\"address_from\":{\"name\":\"Shop\",\"street1\":\"1 Market St\",\"city\":\"San Francisco\",\"state\":\"CA\"", bodies[0]);
+  Assert.Contains("\"weight\":\"900\",\"mass_unit\":\"g\"", bodies[0]);
+  Assert.Equal("9400111", s.TrackingNumber);
+  Assert.StartsWith("https://tools.usps.com", s.TrackingUrl);
+  Assert.Equal("%PDF-1", Text.FromBytes(s.Label!));
+}
+
+[Test]
+void a_parcel_leaving_the_country_carries_its_customs_declaration() {
+  var bodies = new List<string>();
+  Http.Post.Stub((url, body) => { bodies.Add(body); return new HttpResponse { StatusCode = 201, Body = Bought("SUCCESS") }; });
+  Http.Get.Stub(url => new HttpResponse { StatusCode = 200, Body = "%PDF-1", Bytes = Text.ToBytes("%PDF-1") });
+  Carrier().Ship(new ShipmentRequest { Reference = "RC-2001", OptionId = "usps-priority", WeightGrams = 900,
+    To = new DeliveryAddress { Name = "Jean Tremblay", Street = "1 Rue X", PostCode = "H2X 1Y4", City = "Montreal", Country = "CA" },
+    Customs = [new CustomsLine { Description = "Bicycle frame", Quantity = 1, WeightGrams = 900, Value = 450m, Currency = "USD", HsCode = "871491", OriginCountry = "IT" }] });
+  Assert.Contains("tariff_number", bodies[0]);
+  Assert.Contains("871491", bodies[0]);
+  Assert.Contains("Sam Shop", bodies[0]);                                      // who certifies it
+}
+
+[Test]
+void a_parcel_with_an_age_limit_asks_for_an_adult_signature_and_others_do_not() {
+  var bodies = new List<string>();
+  Http.Post.Stub((url, body) => { bodies.Add(body); return new HttpResponse { StatusCode = 201, Body = Bought("SUCCESS") }; });
+  Http.Get.Stub(url => new HttpResponse { StatusCode = 200, Body = "%PDF-1", Bytes = Text.ToBytes("%PDF-1") });
+  var to = new DeliveryAddress { Name = "Ann Lee", Street = "5 Main St", PostCode = "10001", City = "New York", Country = "US" };
+  Carrier().Ship(new ShipmentRequest { Reference = "RC-21", OptionId = "usps-priority", WeightGrams = 1400, To = to, MinimumAge = 21 });
+  Carrier().Ship(new ShipmentRequest { Reference = "RC-22", OptionId = "usps-priority", WeightGrams = 900, To = to });
+  Assert.Contains("\"signature_confirmation\":\"ADULT\"", bodies[0]);
+  Assert.DoesNotContain("signature_confirmation", bodies[1]);
+}
+
+[Test]
+void a_refused_label_says_why() {
+  Http.Post.Stub((url, body) => new HttpResponse { StatusCode = 201, Body = Bought("ERROR") });
+  var e = Assert.Throws<ExternalServiceException>(() => Carrier().Ship(new ShipmentRequest { Reference = "RC-9", OptionId = "usps-priority",
+    WeightGrams = 500, To = new DeliveryAddress { Name = "x", Street = "x", PostCode = "x", City = "x", Country = "US" } }));
+  Assert.Contains("Address not deliverable", e.Message);
+}
+
+[Test]
+void tracking_asks_the_shops_carriers_and_reads_the_status() {
+  Http.Get.Stub(url => new HttpResponse { StatusCode = 200, Body = "{\"carrier\":\"usps\",\"tracking_number\":\"9400111\",\"messages\":[],"
+    + "\"tracking_history\":[],\"tracking_status\":{\"object_created\":\"2026-09-28T10:00:00Z\",\"object_id\":\"s1\","
+    + "\"object_updated\":\"2026-09-28T10:00:00Z\",\"status\":\"DELIVERED\",\"status_details\":\"Delivered, front door\"}}" });
+  Osysharp.Delivery.TrackingStatus t = Carrier().Track("9400111");
+  Assert.Equal(DeliveryState.Delivered, t.State);
+  Assert.Equal("Delivered, front door", t.Description);
+}
+
+[Test]
+void shippos_statuses_read_in_the_contracts_words() {
+  Assert.Equal(DeliveryState.Booked, ShippoState("PRE_TRANSIT"));
+  Assert.Equal(DeliveryState.Returned, ShippoState("RETURNED"));
+}
+
+[Test]
+void it_offers_no_pickups_and_admits_no_unsigned_events() {
+  Assert.False(Carrier().BooksPickups());
+  Assert.Throws<ExternalServiceException>(() => Carrier().HandleEvent("{}", new Dictionary<string, string>()));
+}

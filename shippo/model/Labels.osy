@@ -1,0 +1,102 @@
+// Buying a label from Shippo in one call — the shipment inline, the carrier account and service level named — and
+// reading its answer. The addresses, parcel and customs go as JSON Shippo accepts in place of an object's id.
+namespace Osysharp.Carriers.Shippo.Transactions;
+
+using Osysharp.Delivery;
+
+public class ShippoAddressJson {
+  [ExternalName("name")] public string Name = "";
+  [ExternalName("street1")] public string Street1 = "";
+  [ExternalName("city")] public string City = "";
+  [ExternalName("state")] public string? State;
+  [ExternalName("zip")] public string Zip = "";
+  [ExternalName("country")] public string Country = "";
+  [ExternalName("email")] public string? Email;
+  [ExternalName("phone")] public string? Phone;
+}
+
+public class ShippoParcelJson {
+  [ExternalName("length")] public string Length = "20";
+  [ExternalName("width")] public string Width = "15";
+  [ExternalName("height")] public string Height = "10";
+  [ExternalName("distance_unit")] public string DistanceUnit = "cm";
+  [ExternalName("weight")] public string Weight = "";
+  [ExternalName("mass_unit")] public string MassUnit = "g";
+}
+
+public class ShippoCustomsItemJson {
+  [ExternalName("description")] public string Description = "";
+  [ExternalName("quantity")] public int Quantity = 1;
+  [ExternalName("net_weight")] public string NetWeight = "";
+  [ExternalName("mass_unit")] public string MassUnit = "g";
+  [ExternalName("value_amount")] public string ValueAmount = "";
+  [ExternalName("value_currency")] public string ValueCurrency = "";
+  [ExternalName("origin_country")] public string OriginCountry = "";
+  [ExternalName("tariff_number")] public string TariffNumber = "";
+}
+
+public class ShippoExporterJson {
+  [ExternalName("eori_number")] public string EoriNumber = "";
+}
+
+public class ShippoCustomsJson {
+  [ExternalName("certify")] public bool Certify = true;
+  [ExternalName("certify_signer")] public string CertifySigner = "";
+  [ExternalName("contents_type")] public string ContentsType = "MERCHANDISE";
+  [ExternalName("non_delivery_option")] public string NonDeliveryOption = "RETURN";
+  [ExternalName("incoterm")] public string Incoterm = "DDU";
+  [ExternalName("items")] public List<ShippoCustomsItemJson> Items = [];
+  [ExternalName("exporter_identification")] public ShippoExporterJson? ExporterIdentification;
+}
+
+ShippoAddressJson AddressOf(DeliveryAddress a, string? region) {
+  return new ShippoAddressJson { Name = a.Name, Street1 = a.Street, City = a.City, State = region == "" ? null : region,
+                                 Zip = a.PostCode, Country = a.Country, Email = a.Email, Phone = a.Phone };
+}
+
+/// Buys one label. `isReturn` has Shippo turn the route round. `minimumAge` > 0 (goods with an age — wine) asks the
+/// carrier for an ADULT signature at the door (Shippo's `extra.signature_confirmation`). Answers the tracking number,
+/// link and the label's PDF.
+public Osysharp.Delivery.Shipment BuyLabel(string apiKey, string carrierAccount, string serviceLevel, DeliveryAddress shop, string shopRegion,
+                                           DeliveryAddress customer, int weightGrams, List<CustomsLine> customs, string exporterId,
+                                           string signer, string reference, bool isReturn, int minimumAge = 0) {
+  Json? declaration = null;
+  if (customs.Count > 0) {
+    var d = new ShippoCustomsJson { CertifySigner = signer == "" ? shop.Name : signer,
+                                    ExporterIdentification = exporterId == "" ? null : new ShippoExporterJson { EoriNumber = exporterId } };
+    foreach (var c in customs) {
+      d.Items.Add(new ShippoCustomsItemJson { Description = c.Description, Quantity = c.Quantity, NetWeight = Convert.ToString(c.WeightGrams),
+                                              ValueAmount = c.Value.ToString("0.00"), ValueCurrency = c.Currency,
+                                              OriginCountry = c.OriginCountry, TariffNumber = c.HsCode });
+    }
+    declaration = JsonSerializer.Serialize(d);
+  }
+  var body = new CreateTransactionInput {
+    CarrierAccount = carrierAccount, ServicelevelToken = serviceLevel, LabelFileType = "PDF", Async = false, Metadata = reference,
+    Shipment = new ShipmentCreateRequest {
+      AddressFrom = JsonSerializer.Serialize(AddressOf(shop, shopRegion)),
+      AddressTo = JsonSerializer.Serialize(AddressOf(customer, null)),
+      Parcels = JsonSerializer.Serialize(new List<ShippoParcelJson> { new ShippoParcelJson { Weight = Convert.ToString(Math.Max(weightGrams, 1)) } }),
+      CustomsDeclaration = declaration,
+      Extra = isReturn || minimumAge > 0
+        ? new ShipmentExtra { IsReturn = isReturn ? true : null,
+                              SignatureConfirmation = minimumAge > 0 ? JsonSerializer.Serialize("ADULT") : null }
+        : null,
+    },
+  };
+  var client = new TransactionsClient { ApiKey = apiKey };
+  var t = client.CreateTransaction(null, body);
+  if (t.Status != "SUCCESS") {
+    var why = t.Messages == null ? "" : string.Join("; ", t.Messages.Select(m => m.Text ?? ""));
+    throw new ExternalServiceException($"Shippo could not buy the label ({t.Status ?? "no status"}): {why}");
+  }
+  return new Osysharp.Delivery.Shipment { TrackingNumber = t.TrackingNumber ?? "", TrackingUrl = t.TrackingUrlProvider ?? "",
+                                         Label = LabelFrom(t.LabelUrl) };
+}
+
+/// The label's PDF, fetched from where Shippo keeps it — null when there is none or it cannot be fetched now.
+byte[]? LabelFrom(string? url) {
+  if (url == null || url == "") { return null; }
+  var r = Http.Get(url);
+  return r.IsSuccess ? r.Bytes : null;
+}

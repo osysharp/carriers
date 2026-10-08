@@ -1,0 +1,19 @@
+// Osysharp.Carriers.Shippo — US carriers (USPS, UPS, FedEx, DHL Express) and more behind one API: labels, customs, tracking.
+//
+// `model/api/` is Shippo's API as its own OpenAPI spec describes it — GENERATED with `osy import-api` from
+// https://docs.goshippo.com/spec/shippoapi/public-api.yaml, one namespace per area. `ShippoDelivery` is Shippo as a
+// delivery provider under the `Osysharp.Delivery` contract.
+//
+// ⚑ AUTHENTICATION IS `Authorization: ShippoToken <key>`. A test key (`shippo_test_…`) makes free test labels.
+package Osysharp.Carriers.Shippo {
+  version     "0.1.0";
+  minPlatform "0.9.0";
+  summary     "Shippo — USPS, UPS, FedEx and DHL Express behind one API: labels, customs, returns, tracking, and a delivery provider.";
+  model "model/**/*.osy";
+  use Osysharp.Http;
+  use Osysharp.Delivery@0;
+  egress "api.goshippo.com";
+  // Labels are handed back as a link on Shippo's storage.
+  egress "shippo-delivery.s3.amazonaws.com";
+  tests "tests";
+}
