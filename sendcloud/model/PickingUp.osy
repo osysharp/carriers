@@ -1,0 +1,22 @@
+// A pickup through Sendcloud: the carrier comes to the shop in the day's window.
+namespace Osysharp.Carriers.Sendcloud.Pickups;
+
+using Osysharp.Delivery;
+
+/// Books `carrierCode` to come on the request's day, 09:00–17:00 UTC. Sendcloud answers `ANNOUNCING` until the carrier
+/// confirms; the reference is Sendcloud's id for it.
+public PickupBooking PickupWithSendcloud(string publicKey, string secretKey, string carrierCode, DeliveryAddress shop, PickupRequest request) {
+  var day = request.Date.ToDateTime(TimeOnly.MinValue);
+  var kg = Osysharp.Carriers.Sendcloud.Shipments.SendcloudKilograms(request.WeightGrams <= 0 ? 1000 : request.WeightGrams);
+  var body = new CreatePickupInput {
+    CarrierCode = carrierCode, Reference = request.Reference, Quantity = request.Parcels,
+    TimeSlots = [ new CreatePickupInputTimeSlotsItem { StartAt = day.AddHours(9), EndAt = day.AddHours(17) } ],
+    TotalWeight = new StrWeight { Value = kg, Unit = "kg" },
+    Items = [ new BasePickupItem { Quantity = request.Parcels, ContainerType = "parcel", TotalWeight = new StrWeight { Value = kg, Unit = "kg" } } ],
+    Address = new PickupAddress { Name = shop.Name, AddressLine1 = shop.Street, PostalCode = shop.PostCode, City = shop.City,
+                                  CountryCode = shop.Country, Email = shop.Email, PhoneNumber = shop.Phone },
+  };
+  var made = new PickupsClient { Username = publicKey, Password = secretKey }.CreatePickup(body);
+  if (made.Status == "FAILED") { throw new ExternalServiceException("Sendcloud's carrier refused the pickup."); }
+  return new PickupBooking { Reference = made.Id == null ? (made.Reference ?? "") : Convert.ToString(made.Id.Value) };
+}

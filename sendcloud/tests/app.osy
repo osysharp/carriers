@@ -1,0 +1,7 @@
+// The producer's test project for Osysharp.Carriers.Sendcloud — every call to Sendcloud is stubbed.
+app SendcloudKitTests {
+  tests "**/*.test.osy";
+  use Osysharp.Carriers.Sendcloud@0 { egress "panel.sendcloud.sc"; }
+  use Osysharp.Delivery@0;
+  use Osysharp.Http;
+}

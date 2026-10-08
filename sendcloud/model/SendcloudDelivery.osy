@@ -1,0 +1,122 @@
+namespace Osysharp.Carriers.Sendcloud;
+
+using Osysharp.Delivery;
+
+/// One way to deliver that the shop offers through Sendcloud: a carrier's shipping option, at the shop's price.
+public class SendcloudOption {
+  /// The shop's own id for it — stored with each order ("dhl", "dpd-home").
+  public string Id = "";
+  /// What the customer chooses — "DHL Parcel", "DPD to your door".
+  public string Label = "";
+  public string Description = "";
+  /// Sendcloud's shipping option code, from the panel or `POST /shipping-options` — "dhl_de:parcel/home".
+  public string Code = "";
+  /// Minor units, what the customer pays.
+  public long Price = 0;
+  /// ISO 3166 alpha-2 codes it goes to. Empty: anywhere.
+  public List<string> Countries = [];
+  public int? DaysMin;
+  public int? DaysMax;
+  /// The age this option's carrier checks at the door (Sendcloud's `age_check` functionality: 16 or 18), 0 for none.
+  /// In Sendcloud the check is part of the shipping option itself, so a shop selling goods with an age lists an option
+  /// whose code carries it — and a parcel that needs a check is never booked on one that does not.
+  public int AgeCheck = 0;
+}
+
+/// Sendcloud as a way to deliver, under the `Osysharp.Delivery` contract. It offers the carriers' options the shop
+/// lists, at the shop's prices; sending an order announces the parcel with Sendcloud and answers its tracking number,
+/// link and PDF label; a parcel leaving the EU carries its customs lines. Returns, pickups and tracking go through the
+/// same account.
+///
+///     new SendcloudDelivery { PublicKey = Secret.SendcloudPublicKey, SecretKey = Secret.SendcloudSecretKey,
+///                             Sender = new DeliveryAddress { Name = "…", Street = "…", PostCode = "…", City = "…", Country = "NL" },
+///                             Options = [ new SendcloudOption { Id = "dhl", Label = "DHL Parcel", Code = "dhl_de:parcel/home", Price = 595 } ] }
+public class SendcloudDelivery : IDeliveryProvider {
+  public string Key { get; set; } = "sendcloud";
+  public string Name { get; set; } = "Sendcloud";
+  /// The API keys from Sendcloud's panel (Settings → Integrations) — HTTP Basic.
+  public string PublicKey = "";
+  public string SecretKey = "";
+  /// Sendcloud has no sandbox: a test run ships every parcel as `sendcloud:letter` and every return as
+  /// `sendcloud:letterreturn`, which Sendcloud does not charge for.
+  public bool Test = false;
+  /// Who the parcels come from, and where returns go.
+  public DeliveryAddress Sender = new DeliveryAddress();
+  public List<SendcloudOption> Options = [];
+  /// Minor units; every option is free from this subtotal up. Zero: never free.
+  public long FreeFrom = 0;
+  /// The shipping option code returns are sent with. Empty: no returns through Sendcloud.
+  public string ReturnCode = "";
+  /// Sendcloud's carrier code for pickups ("dhl_express", "ups", "dpd"…). Empty: no pickups.
+  public string PickupCarrier = "";
+  /// The token Sendcloud sends in `Authorization: Bearer …` with each event, as configured on the connection.
+  public string EventToken = "";
+
+  public bool IsReady() { return PublicKey != "" && SecretKey != "" && (Options.Count > 0); }
+
+  public List<DeliveryOption> Quote(DeliveryQuoteRequest request) {
+    var free = FreeFrom > 0 && request.Subtotal >= FreeFrom;
+    var country = request.To == null ? "" : request.To.Country.ToUpper();
+    return Options.Where(o => country == "" || o.Countries.Count == 0 || o.Countries.Contains(country))
+      .Select(o => new DeliveryOption { Id = o.Id, Label = o.Label, Description = o.Description, Price = free ? 0 : o.Price,
+                                        NeedsAddress = true, DaysMin = o.DaysMin, DaysMax = o.DaysMax }).ToList();
+  }
+
+  /// None yet. The Shipments spec this kit is generated from can BOOK to a service point (`to_service_point` on
+  /// `shipment-request-sync-announce`), but finding the points near an address is Sendcloud's separate Service Points
+  /// API, which none of the kit's generated specs covers — so no option asks the customer to choose one.
+  public List<PickupPoint> PickupPoints(string optionId, DeliveryAddress near) { return []; }
+
+  public Shipment Ship(ShipmentRequest request) {
+    var option = Options.FirstOrDefault(o => o.Id == request.OptionId);
+    if (option == null) { throw new ExternalServiceException($"Sendcloud has no option '{request.OptionId}' in this shop's list."); }
+    if (request.MinimumAge > 0 && option.AgeCheck < request.MinimumAge) {
+      throw new ExternalServiceException($"This parcel may only be handed to someone {request.MinimumAge} or older, and '{option.Label}' "
+        + "checks no age at the door. List a Sendcloud option whose code carries an age check (AgeCheck) and send it with that.");
+    }
+    return Osysharp.Carriers.Sendcloud.Shipments.AnnounceWithSendcloud(PublicKey, SecretKey, Test ? "sendcloud:letter" : option.Code, request.SendFrom ?? Sender, request);
+  }
+
+  public ReturnShipment? BookReturn(ReturnShipmentRequest request) {
+    if (ReturnCode == "" && !Test) { return null; }
+    return Osysharp.Carriers.Sendcloud.Returns.ReturnWithSendcloud(PublicKey, SecretKey, Test ? "sendcloud:letterreturn" : ReturnCode, Sender, request);
+  }
+
+  public bool MakesLabels() { return true; }
+
+  public bool BooksPickups() { return PickupCarrier != ""; }
+
+  public PickupBooking? BookPickup(PickupRequest request) {
+    if (PickupCarrier == "") { return null; }
+    return Osysharp.Carriers.Sendcloud.Pickups.PickupWithSendcloud(PublicKey, SecretKey, PickupCarrier, request.SendFrom ?? Sender, request);
+  }
+
+  public TrackingStatus Track(string trackingNumber) {
+    return Osysharp.Carriers.Sendcloud.Tracking.TrackWithSendcloud(PublicKey, SecretKey, trackingNumber);
+  }
+
+  /// A parcel event from Sendcloud's event subscriptions. Admitted only with the configured bearer token — the v3
+  /// deliveries carry no signature, so the token is their authenticity.
+  public List<DeliveryEvent> HandleEvent(string body, Dictionary<string, string> headers) {
+    var auth = headers.ContainsKey("Authorization") ? headers["Authorization"] : headers.ContainsKey("authorization") ? headers["authorization"] : "";
+    if (EventToken == "" || !Crypto.FixedTimeEquals(auth, "Bearer " + EventToken)) {
+      throw new ExternalServiceException("This event was not sent by Sendcloud's connection: its token does not match.");
+    }
+    return Osysharp.Carriers.Sendcloud.Tracking.SendcloudEvents(body);
+  }
+
+}
+
+
+/// Sendcloud's `phase` (and `exception`), in the contract's words — the same vocabulary in tracking and in events.
+public DeliveryState SendcloudState(string? phase, string? exception) {
+  var p = phase ?? "";
+  if (p == "delivered" || p == "delivery_forced") { return DeliveryState.Delivered; }
+  if (p == "pup") { return DeliveryState.ReadyForPickup; }
+  if (p == "none" && (exception ?? "") == "returned_sender") { return DeliveryState.Returned; }
+  if (p == "none" || p == "cancelled") { return DeliveryState.Exception; }
+  if (p == "" || p == "no_label" || p == "announcing" || p == "announced" || p == "ready_to_send" || p == "labelled" || p == "unknown") {
+    return DeliveryState.Booked;
+  }
+  return DeliveryState.InTransit;   // dropped, accepted, sorted, in_transit, customs, in_delivery, attempted
+}

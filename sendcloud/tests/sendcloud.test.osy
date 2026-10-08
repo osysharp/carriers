@@ -1,0 +1,137 @@
+// Sendcloud as a delivery provider, against a stubbed Sendcloud: the requests it sends, and how it reads the answers.
+
+using Osysharp.Delivery;
+using Osysharp.Http;
+using Osysharp.Carriers.Sendcloud;
+
+SendcloudDelivery Carrier() {
+  return new SendcloudDelivery { PublicKey = "pub", SecretKey = "sec", ReturnCode = "postnl:return", PickupCarrier = "dhl_express",
+    EventToken = "evt-token",
+    Sender = new DeliveryAddress { Name = "Shop", Street = "Herengracht 1", PostCode = "1015BA", City = "Amsterdam", Country = "NL", Email = "shop@example.test" },
+    Options = [ new SendcloudOption { Id = "dhl", Label = "DHL Parcel", Code = "dhl_de:parcel/home", Price = 595, Countries = ["NL", "DE", "NO"] } ] };
+}
+
+string Announced(string trackingNumber, string status) {
+  return "{\"data\":{\"id\":\"s-1\",\"to_address\":{\"name\":\"x\",\"address_line_1\":\"x\",\"postal_code\":\"x\",\"city\":\"x\",\"country_code\":\"NL\"},"
+    + "\"from_address\":{\"name\":\"x\",\"address_line_1\":\"x\",\"postal_code\":\"x\",\"city\":\"x\",\"country_code\":\"NL\"},"
+    + "\"ship_with\":{\"type\":\"shipping_option_code\",\"properties\":{\"shipping_option_code\":\"dhl_de:parcel/home\"}},"
+    + "\"parcels\":[{\"id\":77,\"weight\":{\"value\":\"0.900\",\"unit\":\"kg\"},\"tracking_number\":\"" + trackingNumber + "\","
+    + "\"tracking_url\":\"https://tracking.example/" + trackingNumber + "\",\"status\":{\"code\":\"" + status + "\",\"message\":\"The carrier said no\"},"
+    + "\"label_file\":\"JVBERi0x\"}]}}";
+}
+
+[Test]
+void it_offers_the_shops_options_at_its_prices_where_they_go() {
+  var options = Carrier().Quote(new DeliveryQuoteRequest { Currency = "EUR", Subtotal = 5000, To = new DeliveryAddress { Country = "de" } });
+  Assert.Equal(["dhl"], options.Select(o => o.Id).ToList());
+  Assert.Equal(595, options[0].Price);
+  Assert.Empty(Carrier().Quote(new DeliveryQuoteRequest { To = new DeliveryAddress { Country = "US" } }));
+}
+
+[Test]
+void shipping_announces_the_parcel_with_basic_auth_and_answers_its_number_link_and_label() {
+  var urls = new List<string>();
+  var bodies = new List<string>();
+  Http.Post.Stub((url, body, headers) => {
+    urls.Add(url); bodies.Add(body);
+    Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("pub:sec")), headers["Authorization"]);
+    return new HttpResponse { StatusCode = 201, Body = Announced("3SABC123", "ANNOUNCED") };
+  });
+  var shipment = Carrier().Ship(new ShipmentRequest { Reference = "AV-1042", OptionId = "dhl", WeightGrams = 900,
+    To = new DeliveryAddress { Name = "Maja Berg", Street = "Hauptstraße 1", PostCode = "10115", City = "Berlin", Country = "DE", Email = "maja@example.test" } });
+  Assert.Equal("https://panel.sendcloud.sc/api/v3/shipments/announce", urls[0]);
+  Assert.Contains("\"shipping_option_code\":\"dhl_de:parcel/home\"", bodies[0]);
+  Assert.Contains("\"order_number\":\"AV-1042\"", bodies[0]);
+  Assert.Contains("\"address_line_1\":\"Hauptstra\\u00DFe 1\"", bodies[0]);
+  Assert.Contains("\"weight\":{\"value\":\"0.900\",\"unit\":\"kg\"}", bodies[0]);
+  Assert.DoesNotContain("customs_information", bodies[0]);
+  Assert.Equal("3SABC123", shipment.TrackingNumber);
+  Assert.Equal("https://tracking.example/3SABC123", shipment.TrackingUrl);
+  Assert.Equal("%PDF-1", Text.FromBytes(shipment.Label!));
+}
+
+[Test]
+void a_parcel_leaving_the_eu_carries_its_customs_lines_and_postage() {
+  var bodies = new List<string>();
+  Http.Post.Stub((url, body) => { bodies.Add(body); return new HttpResponse { StatusCode = 201, Body = Announced("3SNO1", "ANNOUNCED") }; });
+  Carrier().Ship(new ShipmentRequest { Reference = "AV-2001", OptionId = "dhl", WeightGrams = 900,
+    To = new DeliveryAddress { Name = "Ola Nordmann", Street = "Karl Johans gate 1", PostCode = "0154", City = "Oslo", Country = "NO" },
+    Customs = [new CustomsLine { Description = "Leather shoes", Quantity = 2, WeightGrams = 900, Value = 192m, Currency = "EUR", HsCode = "640399", OriginCountry = "IT" }],
+    ExporterId = "NL123456789", Postage = 12m });
+  Assert.Contains("\"customs_information\":{\"invoice_number\":\"AV-2001\",\"export_reason\":\"commercial_goods\"", bodies[0]);
+  Assert.Contains("\"hs_code\":\"640399\"", bodies[0]);
+  Assert.Contains("\"origin_country\":\"IT\"", bodies[0]);
+  Assert.Contains("\"price\":{\"value\":\"96.00\",\"currency\":\"EUR\"}", bodies[0]);            // per unit
+  Assert.Contains("\"freight_costs\":{\"value\":\"12.00\",\"currency\":\"EUR\"}", bodies[0]);
+}
+
+[Test]
+void a_parcel_with_an_age_limit_goes_only_on_an_option_that_checks_it() {
+  var urls = new List<string>();
+  Http.Post.Stub((url, body, headers) => { urls.Add(url); return new HttpResponse { StatusCode = 200, Body = "{}" }; });
+  var to = new DeliveryAddress { Name = "Jan de Vries", Street = "Kade 1", PostCode = "1011", City = "Amsterdam", Country = "NL" };
+  var e = Assert.Throws<ExternalServiceException>(() => Carrier().Ship(new ShipmentRequest { Reference = "AV-18", OptionId = "dhl",
+    WeightGrams = 1400, To = to, MinimumAge = 18 }));
+  Assert.Contains("18 or older", e.Message);
+  Assert.Empty(urls);                                                          // nothing booked
+}
+
+[Test]
+void a_carriers_refusal_answered_as_201_is_a_failure_not_a_booking() {
+  Http.Post.Stub((url, body) => new HttpResponse { StatusCode = 201, Body = Announced("", "ANNOUNCEMENT_FAILED") });
+  var e = Assert.Throws<ExternalServiceException>(() => Carrier().Ship(new ShipmentRequest { Reference = "AV-9", OptionId = "dhl", WeightGrams = 500,
+    To = new DeliveryAddress { Name = "x", Street = "x", PostCode = "x", City = "x", Country = "DE" } }));
+  Assert.Contains("The carrier said no", e.Message);
+}
+
+[Test]
+void tracking_reads_the_newest_phase_in_the_contracts_words() {
+  Http.Get.Stub(url => new HttpResponse { StatusCode = 200, Body = "{\"source_id\":\"1\",\"announced_at\":\"2026-09-27T10:00:00Z\","
+    + "\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-28T10:00:00Z\",\"details\":{},\"from_address\":{},\"to_address\":{},"
+    + "\"tracking_numbers\":[],\"events\":[{\"phase\":\"delivered\",\"exception\":\"none\",\"description\":\"Parcel has been delivered\"},"
+    + "{\"phase\":\"in_transit\",\"exception\":\"none\"}]}" });
+  var status = Carrier().Track("3SABC123");
+  Assert.Equal(DeliveryState.Delivered, status.State);
+  Assert.Equal("Parcel has been delivered", status.Description);
+  Assert.Equal(DeliveryState.ReadyForPickup, SendcloudState("pup", "none"));
+  Assert.Equal(DeliveryState.Returned, SendcloudState("none", "returned_sender"));
+  Assert.Equal(DeliveryState.InTransit, SendcloudState("in_delivery", "none"));
+}
+
+[Test]
+void an_event_is_admitted_only_with_the_connections_token() {
+  var body = "{\"event_type\":\"parcels.event.created\",\"data\":{\"parcel\":{\"parcel_id\":77,\"tracking_number\":\"3SABC123\",\"carrier_code\":\"dhl\",\"order_number\":\"AV-1042\"},"
+    + "\"event\":{\"event_type\":\"carrier\",\"phase\":\"delivered\",\"exception\":\"none\",\"description\":\"Delivered\"}}}";
+  var ok = new Dictionary<string, string>(); ok.Add("Authorization", "Bearer evt-token");
+  var events = Carrier().HandleEvent(body, ok);
+  Assert.Equal(DeliveryState.Delivered, events.Single().State);
+  Assert.Equal("AV-1042", events.Single().Reference);
+  var forged = new Dictionary<string, string>(); forged.Add("Authorization", "Bearer guessed");
+  Assert.Throws<ExternalServiceException>(() => Carrier().HandleEvent(body, forged));
+}
+
+[Test]
+void a_return_is_announced_to_the_shop_and_answers_its_label() {
+  var bodies = new List<string>();
+  var gets = new List<string>();
+  Http.Post.Stub((url, body) => { bodies.Add(body); return new HttpResponse { StatusCode = 201, Body = "{\"return_id\":5,\"parcel_id\":88,\"multi_collo_ids\":[88]}" }; });
+  Http.Get.Stub(url => { gets.Add(url); return new HttpResponse { StatusCode = 200, Body = "%PDF-1", Bytes = Text.ToBytes("%PDF-1") }; });
+  var r = Carrier().BookReturn(new ReturnShipmentRequest { Reference = "AV-1042-R1", WeightGrams = 900,
+    From = new DeliveryAddress { Name = "Maja Berg", Street = "Hauptstraße 1", PostCode = "10115", City = "Berlin", Country = "DE" } });
+  Assert.Contains("\"shipping_option_code\":\"postnl:return\"", bodies[0]);
+  Assert.Contains("\"to_address\":{\"name\":\"Shop\"", bodies[0]);
+  Assert.StartsWith("https://panel.sendcloud.sc/api/v3/parcels/88/documents/label", gets[0]);
+  Assert.Equal("%PDF-1", Text.FromBytes(r!.Label!));
+}
+
+[Test]
+void a_pickup_asks_the_carrier_to_come_to_the_shop_in_the_days_window() {
+  var bodies = new List<string>();
+  Http.Post.Stub((url, body) => { bodies.Add(body); return new HttpResponse { StatusCode = 201, Body = "{\"data\":{\"id\":4321,\"status\":\"ANNOUNCING\"}}" }; });
+  Assert.True(Carrier().BooksPickups());
+  var booked = Carrier().BookPickup(new PickupRequest { Reference = "AV-PICKUP-20261001", Date = new DateOnly(2026, 10, 1), Parcels = 3, WeightGrams = 2500 });
+  Assert.Equal("4321", booked!.Reference);
+  Assert.Contains("\"carrier_code\":\"dhl_express\"", bodies[0]);
+  Assert.Contains("\"quantity\":3", bodies[0]);
+  Assert.Contains("\"start_at\":\"2026-10-01T09:00:00", bodies[0]);
+}

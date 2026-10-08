@@ -1,0 +1,54 @@
+// The contract's shipment, sent through Sendcloud's generated Shipments client — and its answer read back.
+namespace Osysharp.Carriers.Sendcloud.Shipments;
+
+using Osysharp.Delivery;
+
+/// Announces one parcel with the shipping option `optionCode`; answers its tracking number, link and PDF label.
+/// ⚠ Sendcloud answers a carrier's refusal with 201 and the reason in `errors` — so the answer is always read.
+public Shipment AnnounceWithSendcloud(string publicKey, string secretKey, string optionCode, DeliveryAddress from, ShipmentRequest request) {
+  var currency = request.Customs.Count > 0 ? request.Customs[0].Currency : "";
+  List<ParcelCommonParcelItemsItem> items = [];
+  foreach (var c in request.Customs) {
+    items.Add(new ParcelCommonParcelItemsItem { Description = c.Description, Quantity = c.Quantity,
+      Weight = new Weight { Value = c.WeightGrams / 1000m, Unit = "kg" },
+      Price = new RequiredPrice { Value = SendcloudAmount(c.Quantity == 0 ? c.Value : c.Value / c.Quantity), Currency = c.Currency },
+      HsCode = c.HsCode, OriginCountry = c.OriginCountry });
+  }
+  var body = new ShipmentRequestSyncAnnounceInput {
+    ShipWith = new ShipWith { Type = "shipping_option_code", Properties = new ShippingOptionCodeProperties { ShippingOptionCode = optionCode } },
+    OrderNumber = request.Reference,
+    ToAddress = new AddressWithRequiredFields { Name = request.To.Name, AddressLine1 = request.To.Street, PostalCode = request.To.PostCode,
+                                                City = request.To.City, CountryCode = request.To.Country, Email = request.To.Email, PhoneNumber = request.To.Phone },
+    FromAddress = new ShipmentRequestSyncAnnounceInputFromAddress { Name = from.Name, AddressLine1 = from.Street, PostalCode = from.PostCode,
+                                                                    City = from.City, CountryCode = from.Country, Email = from.Email, PhoneNumber = from.Phone },
+    LabelDetails = new LabelDetails { MimeType = "application/pdf" },
+    Parcels = [ new ParcelCommon { Weight = new StrWeight { Value = SendcloudKilograms(request.WeightGrams), Unit = "kg" },
+                                   ParcelItems = items.Count == 0 ? null : items.ToArray() } ],
+  };
+  if (request.Customs.Count > 0) {
+    // Leaving the EU: Sendcloud makes the customs papers from these — the order is the invoice.
+    body.CustomsInformation = new CustomsInformation { InvoiceNumber = request.Reference, ExportReason = "commercial_goods",
+                                                        ExportType = "commercial_b2c",
+                                                        FreightCosts = new RequiredPrice { Value = SendcloudAmount(request.Postage), Currency = currency } };
+  }
+  var client = new ShipmentsClient { Username = publicKey, Password = secretKey };
+  var answer = client.CreateAndAnnounceShipmentSynchronously(null, body);
+  if (answer.Errors != null && answer.Errors.Length > 0) {
+    throw new ExternalServiceException("Sendcloud could not book the parcel: " + string.Join("; ", answer.Errors.Select(e => e.Detail ?? e.Title ?? e.Code ?? "")));
+  }
+  var parcel = answer.Parcels == null || answer.Parcels.Length == 0 ? null : answer.Parcels[0];
+  if (parcel == null) { throw new ExternalServiceException("Sendcloud booked no parcel."); }
+  if (parcel.Status != null && parcel.Status.Code == "ANNOUNCEMENT_FAILED") {
+    throw new ExternalServiceException("The carrier refused the parcel: " + (parcel.Status.Message ?? "no reason given"));
+  }
+  return new Shipment { TrackingNumber = parcel.TrackingNumber ?? "", TrackingUrl = parcel.TrackingUrl ?? "", Label = parcel.LabelFile };
+}
+
+/// Kilograms as Sendcloud's string wants them, whatever the server's culture: 1730 g → "1.730".
+public string SendcloudKilograms(int grams) { return Convert.ToString(grams / 1000) + "." + Convert.ToString(grams % 1000).PadLeft(3, '0'); }
+
+/// An amount as Sendcloud's string wants it: 96 → "96.00".
+public string SendcloudAmount(decimal value) {
+  var cents = (long)Math.Round(value * 100m, MidpointRounding.AwayFromZero);
+  return Convert.ToString(cents / 100) + "." + Convert.ToString(Math.Abs(cents % 100)).PadLeft(2, '0');
+}

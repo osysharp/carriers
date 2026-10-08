@@ -1,0 +1,38 @@
+// Where a parcel is, and the events Sendcloud sends — both in the contract's words.
+namespace Osysharp.Carriers.Sendcloud.Tracking;
+
+using Osysharp.Delivery;
+
+/// The newest event decides: its phase, or its exception when the phase is `none`.
+public TrackingStatus TrackWithSendcloud(string publicKey, string secretKey, string trackingNumber) {
+  var t = new ParcelTrackingClient { Username = publicKey, Password = secretKey }.RetrieveTrackingInformationForParcel(trackingNumber);
+  var e = t.Events.Length == 0 ? null : t.Events[0];
+  return new TrackingStatus { State = Osysharp.Carriers.Sendcloud.SendcloudState(e?.Phase, e?.Exception), Description = e?.Description ?? "" };
+}
+
+/// One `parcels.event.created` delivery, read.
+public class SendcloudEventParcel {
+  [ExternalName("tracking_number")] public string? TrackingNumber;
+  [ExternalName("order_number")] public string? OrderNumber;
+}
+public class SendcloudEventDetail {
+  [ExternalName("phase")] public string? Phase;
+  [ExternalName("exception")] public string? Exception;
+  [ExternalName("description")] public string? Description;
+}
+public class SendcloudEventData {
+  [ExternalName("parcel")] public SendcloudEventParcel? Parcel;
+  [ExternalName("event")] public SendcloudEventDetail? Event;
+}
+public class SendcloudEventBody {
+  [ExternalName("event_type")] public string EventType = "";
+  [ExternalName("data")] public SendcloudEventData? Data;
+}
+
+public List<DeliveryEvent> SendcloudEvents(string body) {
+  var e = JsonSerializer.Deserialize<SendcloudEventBody>(body);
+  if (e.EventType != "parcels.event.created" || e.Data?.Parcel == null || e.Data.Event == null) { return []; }
+  return [ new DeliveryEvent { TrackingNumber = e.Data.Parcel.TrackingNumber ?? "", Reference = e.Data.Parcel.OrderNumber ?? "",
+                               State = Osysharp.Carriers.Sendcloud.SendcloudState(e.Data.Event.Phase, e.Data.Event.Exception),
+                               Description = e.Data.Event.Description ?? "" } ];
+}

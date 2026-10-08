@@ -1,0 +1,22 @@
+// A return through Sendcloud: from the customer to the shop, with a label to print.
+namespace Osysharp.Carriers.Sendcloud.Returns;
+
+using Osysharp.Delivery;
+
+/// Announces the return with `optionCode`. Sendcloud answers only its ids, so the label is fetched from the documents
+/// API; the tracking number reaches the shop with the parcel's events.
+public ReturnShipment ReturnWithSendcloud(string publicKey, string secretKey, string optionCode, DeliveryAddress shop, ReturnShipmentRequest request) {
+  var body = new CreateReturnSynchronouslyInput {
+    FromAddress = new Address { Name = request.From.Name, AddressLine1 = request.From.Street, PostalCode = request.From.PostCode,
+                                City = request.From.City, CountryCode = request.From.Country, Email = request.From.Email, PhoneNumber = request.From.Phone },
+    ToAddress = new Address { Name = shop.Name, AddressLine1 = shop.Street, PostalCode = shop.PostCode, City = shop.City,
+                              CountryCode = shop.Country, Email = shop.Email, PhoneNumber = shop.Phone },
+    ShipWith = new ShipWith { Type = "shipping_option_code", ShippingOptionCode = optionCode },
+    Weight = new Weight { Value = (request.WeightGrams <= 0 ? 1000 : request.WeightGrams) / 1000m, Unit = "kg" },
+    OrderNumber = request.Reference,
+  };
+  var made = new ReturnsClient { Username = publicKey, Password = secretKey }.CreateReturnSynchronously(null, body);
+  var label = new Osysharp.Carriers.Sendcloud.Documents.ParcelDocumentsClient { Username = publicKey, Password = secretKey }
+    .RetrieveParcelDocument(made.ParcelId, "label", null, "application/pdf", null);
+  return new ReturnShipment { Label = label };
+}
