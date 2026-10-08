@@ -1,0 +1,248 @@
+using Osysharp.Delivery;
+using Osysharp.Http;
+using Osysharp.Carriers.PostNord;
+
+PostNordDelivery Carrier() {
+  return new PostNordDelivery { ApiKey = "k", CustomerNumber = "1111111111", Test = true, HomePrice = 6900, CollectPrice = 4900,
+    FreeFrom = 100000, Sender = new PostNordParty { Name = "Shop", Street = "Terminalvägen 14", PostCode = "17173", City = "Solna", Country = "SE" } };
+}
+
+[Test]
+void it_offers_a_service_point_and_home_delivery_at_the_prices_set_and_only_where_postnord_goes() {
+  var home = new DeliveryQuoteRequest { Currency = "SEK", Subtotal = 50000, To = new DeliveryAddress { Country = "se" } };
+  var options = Carrier().Quote(home);
+  Assert.Equal(["collect", "home"], options.Select(o => o.Id).ToList());
+  Assert.Equal(4900, options[0].Price);
+  var rich = new DeliveryQuoteRequest { Currency = "SEK", Subtotal = 150000, To = new DeliveryAddress { Country = "SE" } };
+  Assert.Equal(0, Carrier().Quote(rich)[1].Price);
+  Assert.Empty(Carrier().Quote(new DeliveryQuoteRequest { To = new DeliveryAddress { Country = "US" } }));
+}
+
+[Test]
+void shipping_books_the_parcel_with_the_orders_reference_and_answers_its_number_link_and_label() {
+  var urls = new List<string>();
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    urls.Add(url); posted.Add(body);
+    return new HttpResponse { StatusCode = 200, Body = "{\"bookingResponse\":{\"bookingId\":\"B1\",\"idInformation\":[{\"status\":\"OK\","
+      + "\"ids\":[{\"idType\":\"itemId\",\"value\":\"00373501093057988987\"}],"
+      + "\"urls\":[{\"type\":\"TRACKING\",\"url\":\"https://attracking.postnord.com/se/?id=00373501093057988987\"}]}]},"
+      + "\"labelPrintout\":[{\"printout\":{\"labelFormat\":\"PDF\",\"encoding\":\"base64\",\"data\":\"JVBERi0x\"}}]}" };
+  });
+  var shipment = Carrier().Ship(new ShipmentRequest { Reference = "AV-1042", OptionId = "home", WeightGrams = 1730,
+    To = new DeliveryAddress { Name = "Maja Berg", Street = "Storgatan 1", PostCode = "11122", City = "Stockholm", Country = "SE",
+                               Email = "maja@example.test" } });
+  Assert.StartsWith("https://atapi2.postnord.com/rest/shipment/v3/edi/labels/pdf?apikey=k", urls[0]);
+  Assert.Contains("\"basicServiceCode\":\"17\"", posted[0]);                 // home delivery
+  Assert.Contains("\"referenceNo\":\"AV-1042\"", posted[0]);
+  Assert.Contains("\"partyId\":\"1111111111\"", posted[0]);
+  Assert.Contains("\"value\":1.730,\"unit\":\"KGM\"", posted[0]);
+  Assert.Contains("\"emailAddress\":\"maja@example.test\"", posted[0]);
+  Assert.Equal("00373501093057988987", shipment.TrackingNumber);
+  Assert.Equal("https://attracking.postnord.com/se/?id=00373501093057988987", shipment.TrackingUrl);
+  Assert.Equal("%PDF-1", Text.FromBytes(shipment.Label));
+}
+
+[Test]
+void the_customer_chooses_among_the_service_points_nearest_their_address() {
+  var asked = new List<string>();
+  Http.Get.Stub((url, headers) => {
+    asked.Add(url);
+    return new HttpResponse { StatusCode = 200, Body = "{\"servicePointInformationResponse\":{\"servicePoints\":["
+      + "{\"servicePointId\":\"122574\",\"name\":\"ICA Supermarket Hornstull\",\"routeDistance\":410,"
+      + "\"visitingAddress\":{\"countryCode\":\"SE\",\"city\":\"STOCKHOLM\",\"streetName\":\"Långholmsgatan\",\"streetNumber\":\"21\",\"postalCode\":\"11733\"},"
+      + "\"openingHours\":{\"postalServices\":["
+      + "{\"openDay\":\"MONDAY\",\"openTime\":\"08:00\",\"closeDay\":\"MONDAY\",\"closeTime\":\"21:00\"},"
+      + "{\"openDay\":\"TUESDAY\",\"openTime\":\"08:00\",\"closeDay\":\"TUESDAY\",\"closeTime\":\"21:00\"},"
+      + "{\"openDay\":\"WEDNESDAY\",\"openTime\":\"08:00\",\"closeDay\":\"WEDNESDAY\",\"closeTime\":\"21:00\"},"
+      + "{\"openDay\":\"THURSDAY\",\"openTime\":\"08:00\",\"closeDay\":\"THURSDAY\",\"closeTime\":\"21:00\"},"
+      + "{\"openDay\":\"FRIDAY\",\"openTime\":\"08:00\",\"closeDay\":\"FRIDAY\",\"closeTime\":\"21:00\"},"
+      + "{\"openDay\":\"SATURDAY\",\"openTime\":\"10:00\",\"closeDay\":\"SATURDAY\",\"closeTime\":\"18:00\"}]}},"
+      + "{\"servicePointId\":\"096544\",\"name\":\"Pressbyrån Zinkensdamm\",\"routeDistance\":920,"
+      + "\"visitingAddress\":{\"countryCode\":\"SE\",\"city\":\"STOCKHOLM\",\"streetName\":\"Ringvägen\",\"streetNumber\":\"41\",\"postalCode\":\"11726\"}}"
+      + "]}}" };
+  });
+  var near = new DeliveryAddress { Street = "Hornsgatan 64", PostCode = "118 21", City = "Stockholm", Country = "SE" };
+  Assert.True(Carrier().Quote(new DeliveryQuoteRequest { To = near })[0].ChoosePoint);            // MyPack Collect
+  var points = Carrier().PickupPoints("collect", near);
+  Assert.StartsWith("https://atapi2.postnord.com/rest/businesslocation/v5/servicepoints/nearest/byaddress?apikey=k", asked[0]);
+  Assert.Contains("&postalCode=11821&", asked[0]);
+  Assert.Equal(["122574", "096544"], points.Select(p => p.Id).ToList());
+  Assert.Equal("ICA Supermarket Hornstull", points[0].Name);
+  Assert.Equal("Långholmsgatan 21", points[0].Street);
+  Assert.Equal("11733", points[0].PostCode);
+  Assert.Equal(410, points[0].DistanceMetres);
+  Assert.Equal("Mon–Fri 08:00–21:00, Sat 10:00–18:00", points[0].OpeningHours);
+  Assert.Equal("", points[1].OpeningHours);
+  Assert.Empty(Carrier().PickupPoints("home", near));                                             // to the door: no point
+  Assert.Equal(1, asked.Count);
+}
+
+[Test]
+void a_parcel_to_a_chosen_service_point_is_booked_with_that_point_as_its_delivery_party() {
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    posted.Add(body);
+    return new HttpResponse { StatusCode = 200, Body = "{\"bookingResponse\":{\"bookingId\":\"B4\",\"idInformation\":[]},\"labelPrintout\":[]}" };
+  });
+  var to = new DeliveryAddress { Name = "Maja Berg", Street = "Hornsgatan 64", PostCode = "11821", City = "Stockholm", Country = "SE" };
+  Carrier().Ship(new ShipmentRequest { Reference = "AV-3001", OptionId = "collect", WeightGrams = 500, To = to,
+    PickupPoint = new PickupPoint { Id = "122574", Name = "ICA Supermarket Hornstull", Street = "Hornstulls strand 3",
+                                    PostCode = "11733", City = "STOCKHOLM", Country = "SE" } });
+  Assert.Contains("\"basicServiceCode\":\"19\"", posted[0]);
+  Assert.Contains("\"deliveryParty\":{\"partyIdentification\":{\"partyId\":\"122574\",\"partyIdType\":\"156\"},"
+    + "\"party\":{\"nameIdentification\":{\"name\":\"ICA Supermarket Hornstull\"},\"address\":{\"streets\":[\"Hornstulls strand 3\"],"
+    + "\"postalCode\":\"11733\",\"city\":\"STOCKHOLM\",\"countryCode\":\"SE\"}}}", posted[0]);
+  Assert.Contains("\"consignee\":{\"party\":{\"nameIdentification\":{\"name\":\"Maja Berg\"}", posted[0]);   // still the recipient
+  // No point chosen: PostNord picks the nearest, as before — and home delivery never names one.
+  Carrier().Ship(new ShipmentRequest { Reference = "AV-3002", OptionId = "collect", To = to });
+  Assert.DoesNotContain("deliveryParty", posted[1]);
+  Carrier().Ship(new ShipmentRequest { Reference = "AV-3003", OptionId = "home", To = to,
+                                       PickupPoint = new PickupPoint { Id = "122574", Name = "ICA" } });
+  Assert.DoesNotContain("deliveryParty", posted[2]);
+}
+
+[Test]
+void tracking_reads_postnords_status_in_the_contracts_words() {
+  Http.Get.Stub((url, headers) => new HttpResponse { StatusCode = 200,
+    Body = "{\"TrackingInformationResponse\":{\"shipments\":[{\"shipmentId\":\"S1\",\"status\":\"DELIVERED\","
+         + "\"statusText\":{\"header\":\"The shipment has been delivered to the recipient\"}}]}}" });
+  var status = Carrier().Track("00373501093057988987");
+  Assert.Equal(DeliveryState.Delivered, status.State);
+  Assert.Equal("The shipment has been delivered to the recipient", status.Description);
+  Assert.Equal(DeliveryState.ReadyForPickup, Carrier().StateOf("AVAILABLE_FOR_DELIVERY"));
+}
+
+[Test]
+void a_refused_key_says_which_host_it_belongs_to() {
+  Http.Post.Stub((url, body) => new HttpResponse { StatusCode = 401, Body = "" });
+  var e = Assert.Throws<ExternalServiceException>(() => Carrier().Ship(new ShipmentRequest { Reference = "X",
+    To = new DeliveryAddress { Name = "A", Street = "B", PostCode = "1", City = "C", Country = "SE" } }));
+  Assert.Contains("acceptance-test host", e.Message);
+}
+
+[Test]
+void a_return_is_booked_from_the_parcel_that_went_out_and_answers_the_code_and_qr_to_show_at_the_counter() {
+  var urls = new List<string>();
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    urls.Add(url); posted.Add(body);
+    return new HttpResponse { StatusCode = 200, Body = "{\"bookingResponse\":{\"bookingId\":\"B2\",\"idInformation\":[{\"status\":\"OK\","
+      + "\"ids\":[{\"idType\":\"originalItemId\",\"value\":\"00373501093057988994\"},{\"idType\":\"returnId\",\"value\":\"4XWIMKIC8S7W81TJ\"},"
+      + "{\"idType\":\"itemId\",\"value\":\"00373501093057989014\"}],"
+      + "\"urls\":[{\"type\":\"TRACKING\",\"url\":\"https://attracking.postnord.com/se/?id=00373501093057989014\"}]}]},"
+      + "\"labelPrintout\":[{\"printout\":{\"labelFormat\":\"PNG\",\"encoding\":\"base64\",\"type\":\"QRCODE\","
+      + "\"dataValue\":\"4XWIMKIC8S7W81TJ\",\"data\":\"iVBORw==\"}}]}" };
+  });
+  var ret = Carrier().BookReturn(new ReturnShipmentRequest { Reference = "AV-1042-R", OriginalTrackingNumber = "00373501093057988994" });
+  Assert.StartsWith("https://atapi2.postnord.com/rest/shipment/v3/returns/ids?apikey=k", urls[0]);
+  Assert.Equal("[{\"return\":{\"id\":\"00373501093057988994\"}}]", posted[0]);
+  Assert.Equal("00373501093057989014", ret!.TrackingNumber);
+  Assert.Equal("4XWIMKIC8S7W81TJ", ret.DropOffCode);
+  Assert.Equal("https://attracking.postnord.com/se/?id=00373501093057989014", ret.TrackingUrl);
+  Assert.Equal(4, ret.QrCode!.Length);                                       // the PNG's first bytes, decoded
+  Assert.Null(Carrier().BookReturn(new ReturnShipmentRequest { Reference = "no parcel went out" }));
+}
+
+[Test]
+void a_parcel_leaving_the_eu_carries_a_cn23_with_its_tariff_numbers_origin_and_postage() {
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    posted.Add(body);
+    return new HttpResponse { StatusCode = 200, Body = "{\"bookingResponse\":{\"bookingId\":\"B2\",\"idInformation\":[{\"status\":\"OK\","
+      + "\"ids\":[{\"idType\":\"itemId\",\"value\":\"00370000000000000001\"}],\"urls\":[]}]},\"labelPrintout\":[]}" };
+  });
+  Carrier().Ship(new ShipmentRequest { Reference = "AV-2001", OptionId = "home", WeightGrams = 900,
+    To = new DeliveryAddress { Name = "Ola Nordmann", Street = "Karl Johans gate 1", PostCode = "0154", City = "Oslo", Country = "NO" },
+    Customs = [new CustomsLine { Description = "Leather shoes, hand-stitched in Tuscany, size 42", Quantity = 1, WeightGrams = 900,
+                                 Value = 96m, Currency = "SEK", HsCode = "640399", OriginCountry = "IT" }],
+    ExporterId = "SE5566778899", Postage = 40m });
+  var json = posted[0];
+  Assert.Contains("\"customsDeclarationCN23\":{\"EORIorPersonalIdNumber\":\"SE5566778899\"", json);
+  Assert.Contains("\"content\":\"Leather shoes, hand-stitched in Tus\"", json);         // PostNord takes 35 characters
+  Assert.Contains("\"value\":{\"amount\":96.00,\"currency\":\"SEK\"}", json);
+  Assert.Contains("\"commercialItems\":[{\"hsTariffNumber\":\"640399\",\"countryCode\":\"IT\"}]", json);
+  Assert.Contains("\"postalCharges\":{\"amount\":40.00,\"currency\":\"SEK\"}", json);
+  Assert.Contains("\"totalGrossWeight\":{\"value\":0.900,\"unit\":\"KGM\"}", json);
+}
+
+[Test]
+void a_parcel_inside_the_eu_is_booked_with_no_customs() {
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    posted.Add(body);
+    return new HttpResponse { StatusCode = 200, Body = "{\"bookingResponse\":{\"bookingId\":\"B3\",\"idInformation\":[]},\"labelPrintout\":[]}" };
+  });
+  Carrier().Ship(new ShipmentRequest { Reference = "AV-2002", OptionId = "home", WeightGrams = 900,
+    To = new DeliveryAddress { Name = "Maja Berg", Street = "Storgatan 1", PostCode = "11122", City = "Stockholm", Country = "SE" } });
+  Assert.DoesNotContain("customsDeclaration", posted[0]);
+}
+
+[Test]
+void a_pickup_asks_postnord_to_come_to_the_shop_on_the_day() {
+  var urls = new List<string>();
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    urls.Add(url); posted.Add(body);
+    return new HttpResponse { StatusCode = 201, Body = "{\"bookingResponse\":{\"bookingId\":\"PICK-77\",\"idInformation\":[]}}" };
+  });
+  var booked = Carrier().BookPickup(new PickupRequest { Reference = "AV-PICKUP-20261001", Date = new DateOnly(2026, 10, 1),
+                                                        Parcels = 3, WeightGrams = 2500, TrackingNumbers = ["00370000000000000001"] });
+  Assert.Equal("PICK-77", booked!.Reference);
+  Assert.StartsWith("https://atapi2.postnord.com/rest/shipment/v3/pickups?apikey=k", urls[0]);
+  Assert.Contains("\"earliestPickupDate\":\"2026-10-01T09:00:00Z\"", posted[0]);
+  Assert.Contains("\"numberOfPackages\":{\"value\":3}", posted[0]);
+  Assert.Contains("\"pickupParty\":{\"party\":{\"nameIdentification\":{\"name\":\"Shop\"}", posted[0]);
+  Assert.Contains("\"itemId\":\"00370000000000000001\"", posted[0]);
+}
+
+[Test]
+void a_parcel_with_an_age_limit_is_booked_with_postnords_age_check_and_the_age_on_the_parcel() {
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => {
+    posted.Add(body);
+    return new HttpResponse { StatusCode = 200, Body = "{\"bookingResponse\":{\"bookingId\":\"B5\",\"idInformation\":[]},\"labelPrintout\":[]}" };
+  });
+  var to = new DeliveryAddress { Name = "Maja Berg", Street = "Hornsgatan 64", PostCode = "11821", City = "Stockholm", Country = "SE" };
+  // Wine for Swedish retail: 20. PostNord's D8 (Age Check), and the age as the parcel's ZAG reference.
+  Carrier().Ship(new ShipmentRequest { Reference = "GG-20", OptionId = "collect", WeightGrams = 1500, To = to, MinimumAge = 20 });
+  Assert.Contains("\"service\":{\"basicServiceCode\":\"19\",\"additionalServiceCode\":[\"D8\"]}", posted[0]);
+  Assert.Contains("\"grossWeight\":{\"value\":1.500,\"unit\":\"KGM\"},\"references\":[{\"referenceNo\":\"20\",\"referenceType\":\"ZAG\"}]}", posted[0]);
+  // An age PostNord does not list is booked at the next one up: 17 → 18.
+  Carrier().Ship(new ShipmentRequest { Reference = "GG-17", OptionId = "home", To = to, MinimumAge = 17 });
+  Assert.Contains("\"basicServiceCode\":\"17\",\"additionalServiceCode\":[\"D8\"]", posted[1]);
+  Assert.Contains("{\"referenceNo\":\"18\",\"referenceType\":\"ZAG\"}", posted[1]);
+  // No limit: no age check, no age.
+  Carrier().Ship(new ShipmentRequest { Reference = "GG-0", OptionId = "home", To = to });
+  Assert.Contains("\"additionalServiceCode\":[]", posted[2]);
+  Assert.DoesNotContain("ZAG", posted[2]);
+}
+
+[Test]
+void an_age_limited_parcel_postnord_cannot_check_is_refused_and_nothing_is_booked() {
+  var posted = new List<string>();
+  Http.Post.Stub((url, body) => { posted.Add(body); return new HttpResponse { StatusCode = 200, Body = "{}" }; });
+  // PostNord checks age only on parcels delivered in Sweden…
+  var oslo = new DeliveryAddress { Name = "Ola Nordmann", Street = "Karl Johans gate 1", PostCode = "0154", City = "Oslo", Country = "NO" };
+  var abroad = Assert.Throws<ExternalServiceException>(() => Carrier().Ship(new ShipmentRequest { Reference = "GG-NO",
+    OptionId = "home", To = oslo, MinimumAge = 18 }));
+  Assert.Contains("18 or older", abroad.Message);
+  Assert.Contains("only on parcels delivered in Sweden", abroad.Message);
+  // …asks for 20 at most…
+  var stockholm = new DeliveryAddress { Name = "Maja Berg", Street = "Storgatan 1", PostCode = "11122", City = "Stockholm", Country = "SE" };
+  var older = Assert.Throws<ExternalServiceException>(() => Carrier().Ship(new ShipmentRequest { Reference = "GG-21",
+    OptionId = "home", To = stockholm, MinimumAge = 21 }));
+  Assert.Contains("16, 18 or 20 at most", older.Message);
+  // …and is booked on a Swedish customer number.
+  var norwegian = Carrier();
+  norwegian.IssuerCode = "Z13";
+  var issuer = Assert.Throws<ExternalServiceException>(() => norwegian.Ship(new ShipmentRequest { Reference = "GG-Z13",
+    OptionId = "collect", To = stockholm, MinimumAge = 18 }));
+  Assert.Contains("Swedish customer number (Z12)", issuer.Message);
+  Assert.Empty(posted);
+  // The client on its own refuses an age PostNord does not take.
+  var client = new PostNordClient { ApiKey = "k", CustomerNumber = "1" };
+  var odd = Assert.Throws<ExternalServiceException>(() => client.Book(new PostNordBooking { Reference = "X", AgeCheck = 19 }));
+  Assert.Contains("16, 18 or 20", odd.Message);
+  Assert.Empty(posted);
+}

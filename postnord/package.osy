@@ -1,0 +1,24 @@
+// Osysharp.Carriers.PostNord — PostNord parcels from Osy#: book a shipment and get its label, follow it, find service points.
+//
+// Two layers. `PostNordClient` is the API as PostNord shapes it (EDI booking with a PDF label, track & trace, service
+// points), usable on its own. `PostNordDelivery` is PostNord as a delivery provider under the `Osysharp.Delivery`
+// contract, so a shop lists it beside any other way to deliver.
+//
+// ⚑ AUTHENTICATION IS AN API KEY IN THE QUERY STRING (`apikey=`), from PostNord's developer portal. The key is a field
+//   on the client, so the app names its own secret.
+package Osysharp.Carriers.PostNord {
+  version     "0.1.0";
+  minPlatform "0.9.0";
+  summary     "PostNord parcels — booking with a PDF label, track & trace, service points, and a delivery provider.";
+  model "model/*.osy";
+  use Osysharp.Http;
+  use Osysharp.Delivery@0;
+  // The production host; the acceptance-test host is the app's to grant when it uses `Test = true`.
+  // ⭐ D-SECRETSINK1 — PostNord authenticates with the key in the QUERY STRING, and has no header alternative, so this
+  //    package says so: the app's grant of this line accepts a secret in that one parameter, and every log and trace of
+  //    those calls redacts it. (The acceptance-test host is reached through the same `BaseUrl`, which only the app sets,
+  //    and the package leash bounds it to the hosts the app granted.)
+  egress "api2.postnord.com" { secretIn query "apikey"; }
+  egress consumer;
+  tests "tests";
+}

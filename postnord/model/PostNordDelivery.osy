@@ -1,0 +1,189 @@
+namespace Osysharp.Carriers.PostNord;
+
+using Osysharp.Delivery;
+
+/// PostNord as a way to deliver, under the `Osysharp.Delivery` contract. It offers MyPack Home (to the door) and MyPack
+/// Collect (a service point the customer chooses from those nearest their address — `PickupPoints`), at the prices you set —
+/// PostNord's API does not quote consumer prices, which depend on your agreement. When the goods go out, `Ship` books
+/// the parcel and answers its tracking number, its tracking link and its PDF label.
+///
+///     new PostNordDelivery { ApiKey = Secret.PostNordApiKey, CustomerNumber = "…",
+///                            Sender = new PostNordParty { Name = "…", Street = "…", PostCode = "…", City = "…", Country = "SE" },
+///                            HomePrice = 6900, CollectPrice = 4900 }
+public class PostNordDelivery : IDeliveryProvider {
+  public string Key { get; set; } = "postnord";
+  public string Name { get; set; } = "PostNord";
+  public string ApiKey = "";
+  public string CustomerNumber = "";
+  public string IssuerCode = "Z12";
+  /// PostNord's acceptance-test API (`atapi2.postnord.com`). Test keys work only there.
+  public bool Test = false;
+  /// Who the parcels come from — printed on every label.
+  public PostNordParty Sender = new PostNordParty();
+  /// ISO 3166 alpha-2 codes it delivers to. Empty: the Nordic countries PostNord serves.
+  public List<string> Countries = ["SE", "DK", "NO", "FI"];
+  /// Minor units. Zero leaves an option out.
+  public long HomePrice = 0;
+  public long CollectPrice = 0;
+  /// Minor units; both options are free from this subtotal up. Zero: never free.
+  public long FreeFrom = 0;
+  public int? DaysMin = 1;
+  public int? DaysMax = 3;
+
+  public bool IsReady() { return ApiKey != "" && CustomerNumber != ""; }
+
+  PostNordClient Client() {
+    return new PostNordClient { ApiKey = ApiKey, CustomerNumber = CustomerNumber, IssuerCode = IssuerCode,
+                                BaseUrl = Test ? "https://atapi2.postnord.com" : "https://api2.postnord.com" };
+  }
+
+  public List<DeliveryOption> Quote(DeliveryQuoteRequest request) {
+    if (request.To != null && !Countries.Contains(request.To.Country.ToUpper())) { return []; }
+    var free = FreeFrom > 0 && request.Subtotal >= FreeFrom;
+    List<DeliveryOption> options = [];
+    if (CollectPrice > 0) {
+      options.Add(new DeliveryOption { Id = "collect", Label = "PostNord service point",
+        Description = "Collect at a service point you choose", Price = free ? 0 : CollectPrice,
+        NeedsAddress = true, DaysMin = DaysMin, DaysMax = DaysMax, ChoosePoint = true });
+    }
+    if (HomePrice > 0) {
+      options.Add(new DeliveryOption { Id = "home", Label = "PostNord home delivery",
+        Description = "To your door", Price = free ? 0 : HomePrice,
+        NeedsAddress = true, DaysMin = DaysMin, DaysMax = DaysMax });
+    }
+    return options;
+  }
+
+  /// The service points nearest the customer's address, for MyPack Collect — from PostNord's service point search
+  /// (businesslocation v5, nearest by address). None for home delivery, and none before a post code.
+  public List<PickupPoint> PickupPoints(string optionId, DeliveryAddress near) {
+    if (optionId != "collect" || near.PostCode.Trim() == "") { return []; }
+    var country = near.Country.Trim() == "" ? "SE" : near.Country.ToUpper();
+    if (!Countries.Contains(country)) { return []; }
+    return Client().NearestServicePoints(country, near.PostCode.Replace(" ", ""), near.City, near.Street)
+      .Where(p => (p.ServicePointId ?? "") != "")
+      .Select(p => new PickupPoint {
+        Id = p.ServicePointId ?? "", Name = p.Name ?? "",
+        Street = ((p.VisitingAddress?.StreetName ?? "") + " " + (p.VisitingAddress?.StreetNumber ?? "")).Trim(),
+        PostCode = p.VisitingAddress?.PostalCode ?? "", City = p.VisitingAddress?.City ?? "",
+        Country = p.VisitingAddress?.CountryCode ?? country,
+        DistanceMetres = p.RouteDistance > 0 ? (int)p.RouteDistance : null,
+        OpeningHours = OpeningHoursText(p.OpeningHours),
+      }).ToList();
+  }
+
+  /// PostNord's opening hours as a customer reads them, days with the same hours run together:
+  /// "Mon–Fri 08:00–21:00, Sat–Sun 10:00–18:00". "" when PostNord gave none.
+  public string OpeningHoursText(PostNordOpeningHours? hours) {
+    if (hours == null) { return ""; }
+    List<string> days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
+    List<string> names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    List<string> parts = [];
+    var from = -1;
+    var last = -1;
+    var span = "";
+    for (var i = 0; i < 7; i = i + 1) {
+      var t = hours.PostalServices.FirstOrDefault(h => (h.OpenDay ?? "").ToUpper() == days[i]);
+      var times = t == null ? "" : $"{t.OpenTime ?? ""}–{t.CloseTime ?? ""}";
+      if (times != "" && times == span && last == i - 1) { last = i; continue; }
+      if (span != "") { parts.Add((from == last ? names[from] : names[from] + "–" + names[last]) + " " + span); }
+      span = times;
+      from = i;
+      last = i;
+    }
+    if (span != "") { parts.Add((from == last ? names[from] : names[from] + "–" + names[last]) + " " + span); }
+    return string.Join(", ", parts);
+  }
+
+  /// The age PostNord's Age Check (D8) is booked with for a parcel that may only be handed to someone `minimumAge` or
+  /// older — the lowest of its three ages (16, 18, 20) that is at least that — or 0 when the parcel has no limit. Throws,
+  /// before anything is booked, when PostNord cannot check it: D8 is Sweden's service (PostNord's service combinations
+  /// list it for Home, 17, and Service Point, 19, delivering to Sweden only — for a Swedish customer number, Z12, and for
+  /// Home also a Danish one, Z11), and no age above 20 can be asked for.
+  public int AgeCheckFor(int minimumAge, string serviceCode, string country) {
+    if (minimumAge <= 0) { return 0; }
+    var age = minimumAge <= 16 ? 16 : minimumAge <= 18 ? 18 : minimumAge <= 20 ? 20 : 0;
+    if (age == 0) {
+      throw new ExternalServiceException($"This parcel may only be handed to someone {minimumAge} or older, and PostNord's age check "
+        + "asks for 16, 18 or 20 at most — send it with a carrier that can check the age it needs.");
+    }
+    if (country.ToUpper() != "SE") {
+      throw new ExternalServiceException($"This parcel may only be handed to someone {minimumAge} or older, and PostNord checks age "
+        + $"only on parcels delivered in Sweden — not to {country.ToUpper()}. Send it with a carrier that checks age there.");
+    }
+    if (IssuerCode != "Z12" && !(IssuerCode == "Z11" && serviceCode == "17")) {
+      throw new ExternalServiceException($"This parcel may only be handed to someone {minimumAge} or older, and PostNord books its "
+        + $"age check on a Swedish customer number (Z12) — this shop books as {IssuerCode}.");
+    }
+    return age;
+  }
+
+  public Shipment Ship(ShipmentRequest request) {
+    // A service point the customer chose goes as the booking's delivery party; otherwise PostNord picks the nearest.
+    var point = request.OptionId == "home" ? null : request.PickupPoint;
+    var service = request.OptionId == "home" ? "17" : "19";
+    // Checked before booking: a parcel PostNord cannot age-check is not booked at all.
+    var ageCheck = AgeCheckFor(request.MinimumAge, service, request.To.Country);
+    var label = Client().Book(new PostNordBooking {
+      ServiceCode = service, AgeCheck = ageCheck,
+      Reference = request.Reference, Sender = request.SendFrom == null ? Sender : PartyOf(request.SendFrom!), WeightGrams = request.WeightGrams,
+      Customs = request.Customs, ExporterId = request.ExporterId, Postage = request.Postage,
+      Recipient = new PostNordParty {
+        Name = request.To.Name, Street = request.To.Street, PostCode = request.To.PostCode, City = request.To.City,
+        Country = request.To.Country, Email = request.To.Email, Phone = request.To.Phone,
+      },
+      ServicePointId = point == null ? "" : point.Id,
+      ServicePoint = point == null ? new PostNordParty()
+        : new PostNordParty { Name = point.Name, Street = point.Street, PostCode = point.PostCode, City = point.City,
+                              Country = point.Country == "" ? request.To.Country : point.Country },
+    });
+    return new Shipment { TrackingNumber = label.ItemId, TrackingUrl = label.TrackingUrl, Label = label.Pdf };
+  }
+
+  public bool MakesLabels() { return true; }
+
+  /// An address in PostNord's shape — a parcel sent from somewhere other than `Sender`.
+  PostNordParty PartyOf(DeliveryAddress a) {
+    return new PostNordParty { Name = a.Name, Street = a.Street, PostCode = a.PostCode, City = a.City, Country = a.Country,
+                               Email = a.Email, Phone = a.Phone };
+  }
+
+  public bool BooksPickups() { return true; }
+
+  /// PostNord comes to the shop (`Sender`) on the day for the parcels.
+  public PickupBooking? BookPickup(PickupRequest request) {
+    var id = Client().BookPickup(new PostNordPickup { Reference = request.Reference, Date = request.Date,
+                                                      From = request.SendFrom == null ? Sender : PartyOf(request.SendFrom!),
+                                                      Parcels = request.Parcels, WeightGrams = request.WeightGrams,
+                                                      ItemIds = request.TrackingNumbers });
+    return new PickupBooking { Reference = id };
+  }
+
+  /// A return through PostNord, from the parcel that went out: the customer gets a QR code to show at any service
+  /// point — nothing to print.
+  public ReturnShipment? BookReturn(ReturnShipmentRequest request) {
+    if (request.OriginalTrackingNumber == "") { return null; }
+    var r = Client().BookReturn(request.OriginalTrackingNumber);
+    return new ReturnShipment { TrackingNumber = r.ItemId, TrackingUrl = r.TrackingUrl, DropOffCode = r.ReturnId, QrCode = r.QrCode };
+  }
+
+  public TrackingStatus Track(string trackingNumber) {
+    var shipment = Client().Track(trackingNumber);
+    return new TrackingStatus { State = StateOf(shipment?.Status ?? ""), Description = shipment?.StatusText?.Header ?? "" };
+  }
+
+  /// PostNord's own status, in the contract's words.
+  public DeliveryState StateOf(string status) {
+    return status == "DELIVERED" ? DeliveryState.Delivered
+         : status == "AVAILABLE_FOR_DELIVERY" ? DeliveryState.ReadyForPickup
+         : status == "RETURNED" ? DeliveryState.Returned
+         : status == "STOPPED" || status == "OTHER" ? DeliveryState.Exception
+         : status == "CREATED" || status == "INFORMED" ? DeliveryState.Booked
+         : DeliveryState.InTransit;
+  }
+
+  /// PostNord's track & trace is asked, not pushed, in this API — there is no event to receive.
+  public List<DeliveryEvent> HandleEvent(string body, Dictionary<string, string> headers) {
+    throw new ExternalServiceException("PostNord does not post delivery events here — ask `Track` instead.");
+  }
+}

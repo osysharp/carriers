@@ -1,0 +1,251 @@
+namespace Osysharp.Carriers.PostNord;
+
+using Osysharp.Delivery;
+using Osysharp.Http;
+
+/// A party on a PostNord booking — the sender or the recipient.
+public class PostNordParty {
+  public string Name = "";
+  public string Street = "";
+  public string PostCode = "";
+  public string City = "";
+  /// ISO 3166 alpha-2.
+  public string Country = "";
+  public string? Email;
+  public string? Phone;
+}
+
+/// One parcel to book.
+public class PostNordBooking {
+  /// PostNord's service code — "17" MyPack Home, "19" MyPack Collect (the recipient's nearest service point).
+  public string ServiceCode = "19";
+  public List<string> AdditionalServiceCodes = [];
+  /// The age the recipient must prove at handover — PostNord's Age Check (Ålderskontroll, additional service "D8"): 16,
+  /// 18 or 20, or 0 for none. The booking then carries D8, and the age as the parcel's own reference of type ZAG — per
+  /// PostNord's General Descriptions: "The only allowed values with this reference type are 16, 18 and 20."
+  public int AgeCheck = 0;
+  /// Your reference for it — an order number. It is printed on the label and PostNord tracks it.
+  public string Reference = "";
+  public PostNordParty Sender = new PostNordParty();
+  public PostNordParty Recipient = new PostNordParty();
+  /// The service point the recipient chose to collect from (`PostNordServicePoint.ServicePointId`), with its name and
+  /// address in `ServicePoint`. Empty: MyPack Collect goes to the point PostNord picks nearest the recipient.
+  public string ServicePointId = "";
+  public PostNordParty ServicePoint = new PostNordParty();
+  public int WeightGrams = 0;
+  /// For a parcel leaving the EU: what is in it, who exports it (EORI), and the postage charged — declared as a CN23.
+  public List<CustomsLine> Customs = [];
+  public string ExporterId = "";
+  public decimal Postage = 0;
+}
+
+/// A pickup to book: PostNord comes to `From` on `Date` for the parcels.
+public class PostNordPickup {
+  public string ServiceCode = "19";
+  public string Reference = "";
+  public DateOnly Date;
+  public PostNordParty From = new PostNordParty();
+  public int Parcels = 1;
+  public int WeightGrams = 0;
+  /// Item ids of parcels already booked, when there are any.
+  public List<string> ItemIds = [];
+}
+
+/// What a booking answers: the parcel's number, where to follow it, and its label.
+public class PostNordLabel {
+  public string ItemId = "";
+  public string TrackingUrl = "";
+  /// The label as a PDF, ready to print.
+  public byte[]? Pdf;
+}
+
+/// A booked return: the parcel's new number, the code the customer shows at the counter, and that code as a QR image.
+public class PostNordReturn {
+  public string ItemId = "";
+  public string ReturnId = "";
+  public string TrackingUrl = "";
+  /// PNG.
+  public byte[]? QrCode;
+}
+
+/// PostNord's API. The key goes in every request's `apikey` parameter.
+public class PostNordClient {
+  public string ApiKey = "";
+  /// The production API. The acceptance-test API is `https://atapi2.postnord.com` — grant that host when you use it.
+  public string BaseUrl = "https://api2.postnord.com";
+  /// Your PostNord customer number — the sender on every booking.
+  public string CustomerNumber = "";
+  /// Who issues the customer number — "Z12" in Sweden (Z11 Denmark, Z13 Norway, Z14 Finland).
+  public string IssuerCode = "Z12";
+
+  /// The service points nearest an address, closest first.
+  public List<PostNordServicePoint> NearestServicePoints(string country, string postCode, string city, string street,
+                                                         int count = 5) {
+    var url = BaseUrl + "/rest/businesslocation/v5/servicepoints/nearest/byaddress?apikey=" + Uri.EscapeDataString(ApiKey)
+      + "&returnType=json&countryCode=" + Uri.EscapeDataString(country) + "&postalCode=" + Uri.EscapeDataString(postCode)
+      + "&city=" + Uri.EscapeDataString(city) + "&streetName=" + Uri.EscapeDataString(street)
+      + "&numberOfServicePoints=" + Convert.ToString(count) + "&context=optionalservicepoint&responseFilter=public";
+    var r = Http.Get(url);
+    if (!r.IsSuccess) { Refused("the service point search", r); }
+    return JsonSerializer.Deserialize<PostNordServicePointResponse>(r.Body).Response?.ServicePoints ?? new List<PostNordServicePoint>();
+  }
+
+  /// Book one parcel and get its PDF label.
+  public PostNordLabel Book(PostNordBooking booking) {
+    if (booking.AgeCheck != 0 && booking.AgeCheck != 16 && booking.AgeCheck != 18 && booking.AgeCheck != 20) {
+      throw new ExternalServiceException($"PostNord's age check takes 16, 18 or 20 — not {booking.AgeCheck}.");
+    }
+    var url = BaseUrl + "/rest/shipment/v3/edi/labels/pdf?apikey=" + Uri.EscapeDataString(ApiKey)
+      + "&paperSize=A4&rotate=0&multiPDF=false&labelType=standard&pnInfoText=false&labelsPerPage=100&page=1"
+      + "&processOffline=false&storeLabel=false";
+    var r = Http.Post(url, BookingJson(booking), "application/json");
+    if (!r.IsSuccess) { Refused("the booking", r); }
+    var result = JsonSerializer.Deserialize<PostNordBookingResult>(r.Body);
+    var info = result.BookingResponse?.IdInformation.FirstOrDefault();
+    var itemId = info?.Ids.FirstOrDefault(i => i.IdType == "itemId")?.Value ?? "";
+    var data = result.LabelPrintout.FirstOrDefault()?.Printout?.Data;
+    return new PostNordLabel {
+      ItemId = itemId,
+      TrackingUrl = info?.Urls.FirstOrDefault(u => u.Type == "TRACKING")?.Url ?? "",
+      Pdf = data == null ? null : Convert.FromBase64String(data),
+    };
+  }
+
+  /// Ask PostNord to come for parcels. Answers PostNord's booking id.
+  public string BookPickup(PostNordPickup pickup) {
+    var url = BaseUrl + "/rest/shipment/v3/pickups?apikey=" + Uri.EscapeDataString(ApiKey);
+    var r = Http.Post(url, PickupJson(pickup), "application/json");
+    if (!r.IsSuccess) { Refused("the pickup", r); }
+    var result = JsonSerializer.Deserialize<PostNordBookingResult>(r.Body);
+    return result.BookingResponse?.BookingId ?? "";
+  }
+
+  /// Book the return of a parcel PostNord delivered, from its item id: no label to print — the customer shows the QR
+  /// code at any service point. The return mirrors the original's references, so it reads as that order's return.
+  public PostNordReturn BookReturn(string originalItemId) {
+    var url = BaseUrl + "/rest/shipment/v3/returns/ids?apikey=" + Uri.EscapeDataString(ApiKey)
+      + "&mirrorReferences=true&appTracking=true&deliveryNotification=false&qrCodeScale=4&locale=en";
+    var r = Http.Post(url, "[{\"return\":{\"id\":" + JsonSerializer.Serialize(originalItemId) + "}}]", "application/json");
+    if (!r.IsSuccess) { Refused("the return", r); }
+    var result = JsonSerializer.Deserialize<PostNordBookingResult>(r.Body);
+    var info = result.BookingResponse?.IdInformation.FirstOrDefault();
+    var qr = result.LabelPrintout.FirstOrDefault(p => p.Printout?.Type == "QRCODE")?.Printout;
+    return new PostNordReturn {
+      ItemId = info?.Ids.FirstOrDefault(i => i.IdType == "itemId")?.Value ?? "",
+      ReturnId = info?.Ids.FirstOrDefault(i => i.IdType == "returnId")?.Value ?? qr?.DataValue ?? "",
+      TrackingUrl = info?.Urls.FirstOrDefault(u => u.Type == "TRACKING")?.Url ?? "",
+      QrCode = qr?.Data == null ? null : Convert.FromBase64String(qr.Data),
+    };
+  }
+
+  /// Where a parcel is, by its item or shipment id.
+  public PostNordTrackedShipment? Track(string id) {
+    var url = BaseUrl + "/rest/shipment/v5/trackandtrace/findByIdentifier.json?apikey=" + Uri.EscapeDataString(ApiKey)
+      + "&id=" + Uri.EscapeDataString(id) + "&locale=en";
+    var r = Http.Get(url);
+    if (!r.IsSuccess) { Refused("track & trace", r); }
+    return JsonSerializer.Deserialize<PostNordTrackingResponse>(r.Body).Response?.Shipments.FirstOrDefault();
+  }
+
+  /// Throws PostNord's refusal, naming the likeliest cause of a 401/403: a key used against the other host.
+  void Refused(string what, HttpResponse r) {
+    throw new ExternalServiceException(r.StatusCode == 401 || r.StatusCode == 403
+      ? $"PostNord refused {what} ({r.StatusCode}): the API key was not accepted — a test key works only against the "
+        + "acceptance-test host and a production key only against production."
+      : $"PostNord refused {what} ({r.StatusCode}): {r.Body}");
+  }
+
+  /// The EDI instruction for one parcel, in PostNord's shape.
+  string BookingJson(PostNordBooking b) {
+    var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+    var codes = b.AdditionalServiceCodes.ToList();
+    if (b.AgeCheck > 0 && !codes.Contains("D8")) { codes.Add("D8"); }         // Age Check
+    var additional = string.Join(",", codes.Select(c => "\"" + c + "\""));
+    // The age rides on the parcel, not the shipment: "presented as a reference on shipment item level" (`item.references`
+    // in PostNord's information model 1.3.2).
+    var itemReferences = b.AgeCheck > 0
+      ? ",\"references\":[{\"referenceNo\":\"" + Convert.ToString(b.AgeCheck) + "\",\"referenceType\":\"ZAG\"}]" : "";
+    var kg = Kilograms(b.WeightGrams);
+    return "{\"messageDate\":\"" + now + "\",\"application\":{\"applicationId\":1438,\"name\":\"PostNord\",\"version\":\"1.0\"},"
+      + "\"updateIndicator\":\"Original\",\"shipment\":[{"
+      + "\"shipmentIdentification\":{\"shipmentId\":\"0\"},"
+      + "\"dateAndTimes\":{\"loadingDate\":\"" + now + "\"},"
+      + "\"service\":{\"basicServiceCode\":\"" + b.ServiceCode + "\",\"additionalServiceCode\":[" + additional + "]},"
+      + "\"freeText\":[],\"numberOfPackages\":{\"value\":1},"
+      + "\"totalGrossWeight\":{\"value\":" + kg + ",\"unit\":\"KGM\"},"
+      + "\"references\":[{\"referenceNo\":" + JsonSerializer.Serialize(b.Reference) + ",\"referenceType\":\"CU\"}],"
+      + "\"parties\":{"
+      + "\"consignor\":{\"issuerCode\":\"" + IssuerCode + "\",\"partyIdentification\":{\"partyId\":"
+      + JsonSerializer.Serialize(CustomerNumber) + ",\"partyIdType\":\"160\"},\"party\":" + PartyJson(b.Sender, false) + "},"
+      + "\"consignee\":{\"party\":" + PartyJson(b.Recipient, true) + "}" + DeliveryPartyJson(b) + "},"
+      + "\"goodsItem\":[{\"packageTypeCode\":\"PC\",\"items\":[{\"itemIdentification\":{\"itemId\":\"0\",\"itemIdType\":\"SSCC\"},"
+      + "\"grossWeight\":{\"value\":" + kg + ",\"unit\":\"KGM\"}" + itemReferences + "}]}]" + CustomsJson(b) + "}]}";
+  }
+
+  /// The service point the recipient chose, as the booking's delivery party — "" when PostNord picks it. Per PostNord's
+  /// information model 1.3.2 (`parties.deliveryParty`: `partyIdentification` and `party`, both required), a service
+  /// point is named by its id with `partyIdType` 156 — "156=Service point ID" in that model's code list.
+  string DeliveryPartyJson(PostNordBooking b) {
+    if (b.ServicePointId == "") { return ""; }
+    return ",\"deliveryParty\":{\"partyIdentification\":{\"partyId\":" + JsonSerializer.Serialize(b.ServicePointId)
+      + ",\"partyIdType\":\"156\"},\"party\":" + PartyJson(b.ServicePoint, false) + "}";
+  }
+
+  /// A CN23 for a parcel leaving the EU, inside the shipment — "" when there is nothing to declare.
+  string CustomsJson(PostNordBooking b) {
+    if (b.Customs.Count == 0) { return ""; }
+    var currency = b.Customs[0].Currency;
+    var lines = string.Join(",", b.Customs.Select(c => "{\"content\":" + JsonSerializer.Serialize(c.Description.Length > 35 ? c.Description.Substring(0, 35) : c.Description)
+      + ",\"quantity\":{\"value\":" + Convert.ToString(c.Quantity) + "},\"grossWeight\":{\"value\":" + Kilograms(c.WeightGrams) + ",\"unit\":\"KGM\"}"
+      + ",\"value\":{\"amount\":" + Amount(c.Value) + ",\"currency\":" + JsonSerializer.Serialize(c.Currency) + "}}"));
+    var items = string.Join(",", b.Customs.Select(c => "{\"hsTariffNumber\":" + JsonSerializer.Serialize(c.HsCode)
+      + ",\"countryCode\":" + JsonSerializer.Serialize(c.OriginCountry) + "}"));
+    return ",\"customsDeclarationCN23\":{\"EORIorPersonalIdNumber\":" + JsonSerializer.Serialize(b.ExporterId)
+      + ",\"categoryOfItem\":{\"categoryType\":[\"COMMERCIALS\"]},\"detailedDescription\":[" + lines + "]"
+      + ",\"totalGrossWeight\":{\"value\":" + Kilograms(b.Customs.Sum(c => c.WeightGrams)) + ",\"unit\":\"KGM\"}"
+      + ",\"totalValue\":{\"amount\":" + Amount(b.Customs.Sum(c => c.Value)) + ",\"currency\":" + JsonSerializer.Serialize(currency) + "}"
+      + ",\"commercialItems\":[" + items + "]"
+      + ",\"postalCharges\":{\"amount\":" + Amount(b.Postage) + ",\"currency\":" + JsonSerializer.Serialize(currency) + "}}";
+  }
+
+  /// The EDI instruction for a pickup: the shop as consignor and pickup party, and the window PostNord comes in.
+  string PickupJson(PostNordPickup p) {
+    var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+    var day = p.Date.ToString("yyyy-MM-dd");
+    var items = p.ItemIds.Count == 0 ? "[{\"itemIdentification\":{\"itemId\":\"0\",\"itemIdType\":\"SSCC\"}}]"
+      : "[" + string.Join(",", p.ItemIds.Select(i => "{\"itemIdentification\":{\"itemId\":" + JsonSerializer.Serialize(i) + "}}")) + "]";
+    return "{\"messageDate\":\"" + now + "\",\"application\":{\"applicationId\":1438,\"name\":\"PostNord\",\"version\":\"1.0\"},"
+      + "\"updateIndicator\":\"Original\",\"shipment\":[{"
+      + "\"dateAndTimes\":{\"earliestPickupDate\":\"" + day + "T09:00:00Z\",\"latestPickupDate\":\"" + day + "T17:00:00Z\"},"
+      + "\"service\":{\"basicServiceCode\":\"" + p.ServiceCode + "\"},"
+      + "\"numberOfPackages\":{\"value\":" + Convert.ToString(p.Parcels) + "},"
+      + "\"totalGrossWeight\":{\"value\":" + Kilograms(p.WeightGrams) + ",\"unit\":\"KGM\"},"
+      + "\"references\":[{\"referenceNo\":" + JsonSerializer.Serialize(p.Reference) + ",\"referenceType\":\"CU\"}],"
+      + "\"parties\":{"
+      + "\"consignor\":{\"issuerCode\":\"" + IssuerCode + "\",\"partyIdentification\":{\"partyId\":"
+      + JsonSerializer.Serialize(CustomerNumber) + ",\"partyIdType\":\"160\"},\"party\":" + PartyJson(p.From, false) + "},"
+      + "\"pickupParty\":{\"party\":" + PartyJson(p.From, true) + "}},"
+      + "\"goodsItem\":[{\"packageTypeCode\":\"PC\",\"items\":" + items + "}]}]}";
+  }
+
+  /// Kilograms with a point, whatever the server's culture: 1730 g → "1.730".
+  string Kilograms(int grams) { return Convert.ToString(grams / 1000) + "." + Convert.ToString(grams % 1000).PadLeft(3, '0'); }
+
+  /// An amount with a point and two decimals, whatever the server's culture: 96 → "96.00".
+  string Amount(decimal value) {
+    var cents = (long)Math.Round(value * 100m, MidpointRounding.AwayFromZero);
+    return Convert.ToString(cents / 100) + "." + Convert.ToString(Math.Abs(cents % 100)).PadLeft(2, '0');
+  }
+
+  string PartyJson(PostNordParty p, bool contact) {
+    var json = "{\"nameIdentification\":{\"name\":" + JsonSerializer.Serialize(p.Name) + "},"
+      + "\"address\":{\"streets\":[" + JsonSerializer.Serialize(p.Street) + "],\"postalCode\":" + JsonSerializer.Serialize(p.PostCode)
+      + ",\"city\":" + JsonSerializer.Serialize(p.City) + ",\"countryCode\":" + JsonSerializer.Serialize(p.Country) + "}";
+    if (contact) {
+      json = json + ",\"contact\":{\"contactName\":" + JsonSerializer.Serialize(p.Name)
+        + (p.Email == null ? "" : ",\"emailAddress\":" + JsonSerializer.Serialize(p.Email))
+        + (p.Phone == null ? "" : ",\"smsNo\":" + JsonSerializer.Serialize(p.Phone)) + "}";
+    }
+    return json + "}";
+  }
+}

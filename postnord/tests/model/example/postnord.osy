@@ -1,0 +1,37 @@
+// EXAMPLE — the smallest working shape of PostNord in an app: the client with its key, a booking, and the
+// same key as a delivery provider. osyrin.com/integrations/ shows this file; it compiles with the kit's test app.
+using Osysharp.Carriers.PostNord;
+using Osysharp.Delivery;
+
+// The key from PostNord's developer portal. It travels as the `apikey` query parameter.
+app.Secrets = [ new Secret("PostNordApiKey") ];
+
+PostNordParty Warehouse() {
+  return new PostNordParty { Name = "Your Shop", Street = "Storgatan 1", PostCode = "11122",
+                             City = "Stockholm", Country = "SE" };
+}
+
+/// The client, key and all. Returned, never read back: the key cannot leave this function.
+PostNordClient PostNord() {
+  return new PostNordClient { ApiKey = Secret.PostNordApiKey, CustomerNumber = "1234567890" };
+}
+
+/// Book a parcel to a service point the customer chooses (MyPack Collect) and get the label to print.
+PostNordLabel BookParcel(string reference, PostNordParty recipient, int weightGrams) {
+  return PostNord().Book(new PostNordBooking {
+    ServiceCode = "19", Reference = reference, Sender = Warehouse(), Recipient = recipient,
+    WeightGrams = weightGrams,
+  });
+}
+
+/// Where is it now? The label's ItemId is what you ask about.
+PostNordTrackedShipment? WhereIs(string itemId) { return PostNord().Track(itemId); }
+
+/// …or as a delivery provider beside any other, for an app on the Osysharp.Delivery contract —
+/// the shop kit, for one. Prices are yours: PostNord's API does not quote consumer prices.
+List<IDeliveryProvider> Carriers() {
+  return [ new PostNordDelivery {
+    ApiKey = Secret.PostNordApiKey, CustomerNumber = "1234567890", Sender = Warehouse(),
+    CollectPrice = 4900, HomePrice = 6900, FreeFrom = 100000,
+  } ];
+}

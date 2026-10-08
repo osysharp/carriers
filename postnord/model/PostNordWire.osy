@@ -1,0 +1,104 @@
+namespace Osysharp.Carriers.PostNord;
+
+// ── service points (businesslocation v5) ─────────────────────────────────────────────────────────────────────────
+
+public class PostNordAddress {
+  [ExternalName("countryCode")] public string? CountryCode;
+  [ExternalName("city")] public string? City;
+  [ExternalName("streetName")] public string? StreetName;
+  [ExternalName("streetNumber")] public string? StreetNumber;
+  [ExternalName("postalCode")] public string? PostalCode;
+}
+
+/// One span of opening hours — `openDay` "MONDAY", `openTime` "08:00".
+public class PostNordOpeningTime {
+  [ExternalName("openDay")] public string? OpenDay;
+  [ExternalName("openTime")] public string? OpenTime;
+  [ExternalName("closeDay")] public string? CloseDay;
+  [ExternalName("closeTime")] public string? CloseTime;
+}
+
+public class PostNordOpeningHours {
+  /// When the point hands out parcels.
+  [ExternalName("postalServices")] public List<PostNordOpeningTime> PostalServices = [];
+}
+
+public class PostNordServicePoint {
+  [ExternalName("servicePointId")] public string? ServicePointId;
+  [ExternalName("name")] public string? Name;
+  [ExternalName("visitingAddress")] public PostNordAddress? VisitingAddress;
+  /// Metres from the address asked about, along the road.
+  [ExternalName("routeDistance")] public long RouteDistance = 0;
+  [ExternalName("openingHours")] public PostNordOpeningHours? OpeningHours;
+}
+
+public class PostNordServicePointList {
+  [ExternalName("servicePoints")] public List<PostNordServicePoint> ServicePoints = [];
+}
+
+public class PostNordServicePointResponse {
+  [ExternalName("servicePointInformationResponse")] public PostNordServicePointList? Response;
+}
+
+// ── track & trace v5 ─────────────────────────────────────────────────────────────────────────────────────────────
+
+public class PostNordStatusText {
+  [ExternalName("header")] public string? Header;
+  [ExternalName("body")] public string? Body;
+}
+
+public class PostNordTrackedShipment {
+  [ExternalName("shipmentId")] public string? ShipmentId;
+  /// `CREATED` · `EN_ROUTE` · `AVAILABLE_FOR_DELIVERY` · `DELIVERED` · `RETURNED` · `STOPPED` · `OTHER` …
+  [ExternalName("status")] public string? Status;
+  [ExternalName("statusText")] public PostNordStatusText? StatusText;
+}
+
+public class PostNordTrackingInformation {
+  [ExternalName("shipments")] public List<PostNordTrackedShipment> Shipments = [];
+}
+
+public class PostNordTrackingResponse {
+  [ExternalName("TrackingInformationResponse")] public PostNordTrackingInformation? Response;
+}
+
+// ── booking (shipment v3 EDI, with a PDF label) ──────────────────────────────────────────────────────────────────
+
+public class PostNordUrl {
+  [ExternalName("type")] public string? Type;
+  [ExternalName("url")] public string? Url;
+}
+
+public class PostNordId {
+  [ExternalName("idType")] public string? IdType;
+  [ExternalName("value")] public string? Value;
+}
+
+public class PostNordIdInformation {
+  [ExternalName("status")] public string? Status;
+  [ExternalName("ids")] public List<PostNordId> Ids = [];
+  [ExternalName("urls")] public List<PostNordUrl> Urls = [];
+}
+
+public class PostNordBookingResponse {
+  [ExternalName("bookingId")] public string? BookingId;
+  [ExternalName("idInformation")] public List<PostNordIdInformation> IdInformation = [];
+}
+
+public class PostNordPrintout {
+  [ExternalName("labelFormat")] public string? LabelFormat;
+  [ExternalName("encoding")] public string? Encoding;
+  /// "QRCODE" for a return's drop-off code, whose value is `DataValue`.
+  [ExternalName("type")] public string? Type;
+  [ExternalName("dataValue")] public string? DataValue;
+  [ExternalName("data")] public string? Data;
+}
+
+public class PostNordLabelPrintout {
+  [ExternalName("printout")] public PostNordPrintout? Printout;
+}
+
+public class PostNordBookingResult {
+  [ExternalName("bookingResponse")] public PostNordBookingResponse? BookingResponse;
+  [ExternalName("labelPrintout")] public List<PostNordLabelPrintout> LabelPrintout = [];
+}

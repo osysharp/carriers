@@ -1,0 +1,8 @@
+// The producer's test project for Osysharp.Carriers.PostNord — every call to PostNord is stubbed.
+app PostNordKitTests {
+  model "model/**/*.osy";
+  tests "**/*.test.osy";
+  use Osysharp.Carriers.PostNord@0 { egress "api2.postnord.com"; egress "atapi2.postnord.com"; }
+  use Osysharp.Delivery@0;
+  use Osysharp.Http;
+}
