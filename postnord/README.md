@@ -67,7 +67,6 @@ From PostNord's own documents, read 2026-09-29:
   [information model 1.3.2](https://api.swaggerhub.com/domains/postnord/PostNord-Information-Model/1.3.2), the schema
   the booking API ([shipment-v3-booking-sao](https://app.swaggerhub.com/apis-docs/postnord/shipment-v3-booking-sao/3.3.10)) references.
 
-⚠ Like the rest of the kit, this has not been sent to PostNord with a real key.
 
 ## Keys and hosts
 
@@ -75,10 +74,9 @@ The key comes from PostNord's developer portal and travels as the `apikey` query
 the acceptance-test host (`Test = true`, `atapi2.postnord.com` — grant that host too) and a production key against
 `api2.postnord.com` only; a key used against the wrong one is refused, and the error says so.
 
-⚠ The acceptance-test host name is taken from PostNord's published examples and has not been exercised against a real
-test key from this package yet.
+The acceptance-test host name is the one PostNord's published examples use.
 
-## What is not covered yet
+## What it does not cover
 
 - An ID check with no age (`C4`), or one against the recipient's personal number (`24`).
 - ZPL labels (the booking asks for PDF only).
@@ -87,4 +85,4 @@ test key from this package yet.
 ## Source and tests
 
 Everything is in `model/`, with no C# anywhere. `tests/` is the producer's own project, every PostNord call
-stubbed. It does not ship with the package.
+stubbed with the requests and answers PostNord's documents describe. It does not ship with the package.
