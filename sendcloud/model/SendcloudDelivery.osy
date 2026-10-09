@@ -62,9 +62,9 @@ public class SendcloudDelivery : IDeliveryProvider {
                                         NeedsAddress = true, DaysMin = o.DaysMin, DaysMax = o.DaysMax }).ToList();
   }
 
-  /// None yet. The Shipments spec this kit is generated from can BOOK to a service point (`to_service_point` on
-  /// `shipment-request-sync-announce`), but finding the points near an address is Sendcloud's separate Service Points
-  /// API, which none of the kit's generated specs covers — so no option asks the customer to choose one.
+  /// None: every option delivers to the customer's address. The Shipments API can book to a service point
+  /// (`to_service_point` on `shipment-request-sync-announce`), but finding the points near an address is Sendcloud's
+  /// separate Service Points API, which this kit does not include — so no option asks the customer to choose one.
   public List<PickupPoint> PickupPoints(string optionId, DeliveryAddress near) { return []; }
 
   public Shipment Ship(ShipmentRequest request) {

@@ -40,7 +40,7 @@ does not charge for — Sendcloud has no sandbox.
 tracking, documents — and ordinary source from then on. `SendcloudDelivery` and four small adapters map the delivery
 contract onto it.
 
-⚑ **Checked against a stubbed Sendcloud, not a live account.** Every request and answer in the tests follows the
-published specs. Two things the specs leave open: a return answers only its ids (the label is fetched from the
+⚑ **The tests run against a stubbed Sendcloud**, and every request and answer in them follows the published specs.
+Two things the specs leave open are settled here: a return answers only its ids (the label is fetched from the
 documents API, and the tracking number arrives with the parcel's events), and a v3 event carries no signature — it is
 admitted by the bearer token configured on the connection.

@@ -6,8 +6,8 @@
     {
       "name": "Osysharp.Carriers.Sendcloud",
       "kind": "package",
-      "version": "0.1.0",
-      "hash": "sha256:53974673d39d3516d277a19d62387de3b2c6f4c24be8161bd318afa6cb6807cc",
+      "version": "0.1.1",
+      "hash": "sha256:14df939432e2c959d0173472fa5e6f5ddedcc330b72bd1f438785e1ed8cacd56",
       "minPlatform": "0.9.0",
       "shadow": "app-forkable",
       "source": "workspace:kits/sendcloud",
@@ -25,8 +25,8 @@
     {
       "name": "Osysharp.Delivery",
       "kind": "package",
-      "version": "0.1.0",
-      "hash": "sha256:4938c793fe6765bd64250b643f00e8b83fc09cbfed0f16a42052c2446b721f9a",
+      "version": "0.1.1",
+      "hash": "sha256:cd33e075ba5ba55035eb238927ec9cbb80845dec22de08b0f5a7792cdeea3034",
       "minPlatform": "0.9.0",
       "shadow": "app-forkable",
       "source": "workspace:kits/delivery",
