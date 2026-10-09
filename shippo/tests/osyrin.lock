@@ -6,8 +6,8 @@
     {
       "name": "Osysharp.Carriers.Shippo",
       "kind": "package",
-      "version": "0.1.0",
-      "hash": "sha256:667c32e03aeed2d7f034d7c121877dddc811a6151064819bc7fc11aac1c85584",
+      "version": "0.1.1",
+      "hash": "sha256:692e4ffcaefc847bb30a55062ee12b2e37bb3c52879219ff0a01fd724a642d91",
       "minPlatform": "0.9.0",
       "shadow": "app-forkable",
       "source": "workspace:kits/shippo",
@@ -25,12 +25,21 @@
     {
       "name": "Osysharp.Delivery",
       "kind": "package",
-      "version": "0.1.0",
-      "hash": "sha256:4938c793fe6765bd64250b643f00e8b83fc09cbfed0f16a42052c2446b721f9a",
+      "version": "0.1.1",
+      "hash": "sha256:cd33e075ba5ba55035eb238927ec9cbb80845dec22de08b0f5a7792cdeea3034",
       "minPlatform": "0.9.0",
       "shadow": "app-forkable",
       "source": "workspace:kits/delivery",
       "constraint": "0"
     }
-  ]
+  ],
+  "bridges": {
+    "searched": [
+      "workspace",
+      "platform"
+    ],
+    "skipped": [
+      "github: offline \u2014 the public catalog was not searched for bridges. Run \u0060osy lock\u0060 with a network to look."
+    ]
+  }
 }

@@ -6,7 +6,7 @@
 //
 // ⚑ AUTHENTICATION IS `Authorization: ShippoToken <key>`. A test key (`shippo_test_…`) makes free test labels.
 package Osysharp.Carriers.Shippo {
-  version     "0.1.0";
+  version "0.1.1";
   minPlatform "0.9.0";
   summary     "Shippo — USPS, UPS, FedEx and DHL Express behind one API: labels, customs, returns, tracking, and a delivery provider.";
   model "model/**/*.osy";

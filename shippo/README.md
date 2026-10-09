@@ -37,6 +37,6 @@ A test key (`shippo_test_…`) buys free test labels.
 
 `model/api/` is Shippo's own API, **generated with `osy import-api`** from its published OpenAPI spec
 (`https://docs.goshippo.com/spec/shippoapi/public-api.yaml`), one namespace per area and ordinary source from then on.
-Two lines were corrected by hand: the `Authorization` header is `ShippoToken <key>` as the spec's `x-token-prefix` says
-(the generator is being fixed to emit that), and the two clients are named `TransactionsClient` and `TrackingClient`.
-Checked against a stubbed Shippo, not a live account.
+Two lines are set by hand: the `Authorization` header is `ShippoToken <key>` as the spec's `x-token-prefix` says, and
+the two clients are named `TransactionsClient` and `TrackingClient`. The tests run against a stubbed Shippo that answers
+as the published spec describes.
