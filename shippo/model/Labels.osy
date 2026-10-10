@@ -2,7 +2,7 @@
 // reading its answer. The addresses, parcel and customs go as JSON Shippo accepts in place of an object's id.
 namespace Osysharp.Carriers.Shippo.Transactions;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 public class ShippoAddressJson {
   [ExternalName("name")] public string Name = "";
@@ -57,7 +57,7 @@ ShippoAddressJson AddressOf(DeliveryAddress a, string? region) {
 /// Buys one label. `isReturn` has Shippo turn the route round. `minimumAge` > 0 (goods with an age — wine) asks the
 /// carrier for an ADULT signature at the door (Shippo's `extra.signature_confirmation`). Answers the tracking number,
 /// link and the label's PDF.
-public Osysharp.Delivery.Shipment BuyLabel(string apiKey, string carrierAccount, string serviceLevel, DeliveryAddress shop, string shopRegion,
+public Osysharp.Shipping.Shipment BuyLabel(string apiKey, string carrierAccount, string serviceLevel, DeliveryAddress shop, string shopRegion,
                                            DeliveryAddress customer, int weightGrams, List<CustomsLine> customs, string exporterId,
                                            string signer, string reference, bool isReturn, int minimumAge = 0) {
   Json? declaration = null;
@@ -90,7 +90,7 @@ public Osysharp.Delivery.Shipment BuyLabel(string apiKey, string carrierAccount,
     var why = t.Messages == null ? "" : string.Join("; ", t.Messages.Select(m => m.Text ?? ""));
     throw new ExternalServiceException($"Shippo could not buy the label ({t.Status ?? "no status"}): {why}");
   }
-  return new Osysharp.Delivery.Shipment { TrackingNumber = t.TrackingNumber ?? "", TrackingUrl = t.TrackingUrlProvider ?? "",
+  return new Osysharp.Shipping.Shipment { TrackingNumber = t.TrackingNumber ?? "", TrackingUrl = t.TrackingUrlProvider ?? "",
                                          Label = LabelFrom(t.LabelUrl) };
 }
 

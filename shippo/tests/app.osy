@@ -2,6 +2,6 @@
 app ShippoKitTests {
   tests "**/*.test.osy";
   use Osysharp.Carriers.Shippo@0 { egress "api.goshippo.com"; egress "shippo-delivery.s3.amazonaws.com"; }
-  use Osysharp.Delivery@0;
+  use Osysharp.Shipping@0;
   use Osysharp.Http;
 }

@@ -1,7 +1,7 @@
 # Osysharp.Carriers.Shippo
 
 US carriers — USPS, UPS, FedEx, DHL Express — and more through [Shippo](https://goshippo.com), as a delivery provider
-under [Osysharp.Delivery](https://osyrin.com/templates/kits/delivery/). The US counterpart of [Osysharp.Carriers.Sendcloud](https://osyrin.com/templates/kits/sendcloud/).
+under [Osysharp.Shipping](https://osyrin.com/templates/kits/shipping/). The US counterpart of [Osysharp.Carriers.Sendcloud](https://osyrin.com/templates/kits/sendcloud/).
 
 - **Labels in one call** — sending an order buys the label with the shipment inline, the carrier account and service
   level named, and answers the tracking number, the carrier's tracking link and the PDF. A refusal says why.

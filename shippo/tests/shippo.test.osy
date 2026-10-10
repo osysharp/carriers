@@ -1,6 +1,6 @@
 // Shippo as a delivery provider, against a stubbed Shippo: the label it buys, and how it reads the answers.
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 using Osysharp.Http;
 using Osysharp.Carriers.Shippo;
 
@@ -84,7 +84,7 @@ void tracking_asks_the_shops_carriers_and_reads_the_status() {
   Http.Get.Stub(url => new HttpResponse { StatusCode = 200, Body = "{\"carrier\":\"usps\",\"tracking_number\":\"9400111\",\"messages\":[],"
     + "\"tracking_history\":[],\"tracking_status\":{\"object_created\":\"2026-09-28T10:00:00Z\",\"object_id\":\"s1\","
     + "\"object_updated\":\"2026-09-28T10:00:00Z\",\"status\":\"DELIVERED\",\"status_details\":\"Delivered, front door\"}}" });
-  Osysharp.Delivery.TrackingStatus t = Carrier().Track("9400111");
+  Osysharp.Shipping.TrackingStatus t = Carrier().Track("9400111");
   Assert.Equal(DeliveryState.Delivered, t.State);
   Assert.Equal("Delivered, front door", t.Description);
 }

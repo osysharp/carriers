@@ -1,6 +1,6 @@
 namespace Osysharp.Carriers.Shippo;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// One way to deliver the shop offers through Shippo: a carrier's service level, at the shop's price.
 public class ShippoOption {
@@ -21,7 +21,7 @@ public class ShippoOption {
   public int? DaysMax;
 }
 
-/// Shippo as a way to deliver, under the `Osysharp.Delivery` contract: the shop's options at the shop's prices; sending an
+/// Shippo as a way to deliver, under the `Osysharp.Shipping` contract: the shop's options at the shop's prices; sending an
 /// order buys the label in one call (the shipment inline, the carrier account and service level named) and answers the
 /// tracking number, link and PDF; a parcel leaving the country carries its customs declaration; returns are labels
 /// Shippo turns around.
@@ -82,8 +82,8 @@ public class ShippoDelivery : IDeliveryProvider {
 
   /// Tracking asks by carrier and number; the carrier is not on the parcel, so each carrier the shop sends with is asked
   /// until one knows it.
-  public Osysharp.Delivery.TrackingStatus Track(string trackingNumber) {
-    var last = new Osysharp.Delivery.TrackingStatus { State = DeliveryState.Booked };
+  public Osysharp.Shipping.TrackingStatus Track(string trackingNumber) {
+    var last = new Osysharp.Shipping.TrackingStatus { State = DeliveryState.Booked };
     foreach (var carrier in Options.Select(o => o.Carrier).Where(c => c != "").Distinct().ToList()) {
       var status = Osysharp.Carriers.Shippo.Tracking.TrackWithShippo(ApiKey, carrier, trackingNumber);
       if (status != null) { return status; }

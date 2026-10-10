@@ -1,14 +1,14 @@
 // Where a parcel is, asked of Shippo by carrier and number.
 namespace Osysharp.Carriers.Shippo.Tracking;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// The status `carrier` gives `trackingNumber`, or null when that carrier does not know it.
-public Osysharp.Delivery.TrackingStatus? TrackWithShippo(string apiKey, string carrier, string trackingNumber) {
+public Osysharp.Shipping.TrackingStatus? TrackWithShippo(string apiKey, string carrier, string trackingNumber) {
   try {
     var t = new TrackingClient { ApiKey = apiKey }.GetTrack(trackingNumber, carrier, null);
     if (t.TrackingStatus == null || t.TrackingStatus.Status == "UNKNOWN") { return null; }
-    return new Osysharp.Delivery.TrackingStatus { State = Osysharp.Carriers.Shippo.ShippoState(t.TrackingStatus.Status), Description = t.TrackingStatus.StatusDetails };
+    return new Osysharp.Shipping.TrackingStatus { State = Osysharp.Carriers.Shippo.ShippoState(t.TrackingStatus.Status), Description = t.TrackingStatus.StatusDetails };
   }
   catch (ExternalServiceException) { return null; }
 }
