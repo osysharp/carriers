@@ -13,7 +13,7 @@ under [Osysharp.Shipping](https://osyrin.com/templates/kits/shipping/). The US c
 
 ```osy
 // app.osy
-use Osysharp.Carriers.Shippo@0 { egress "api.goshippo.com"; egress "shippo-delivery.s3.amazonaws.com"; }
+use Osysharp.Carriers.Shippo@1 { egress "api.goshippo.com"; egress "shippo-delivery.s3.amazonaws.com"; }
 ```
 
 ```osy
