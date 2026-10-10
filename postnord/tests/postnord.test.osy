@@ -1,4 +1,4 @@
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 using Osysharp.Http;
 using Osysharp.Carriers.PostNord;
 

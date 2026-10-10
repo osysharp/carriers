@@ -1,8 +1,8 @@
 namespace Osysharp.Carriers.PostNord;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
-/// PostNord as a way to deliver, under the `Osysharp.Delivery` contract. It offers MyPack Home (to the door) and MyPack
+/// PostNord as a way to deliver, under the `Osysharp.Shipping` contract. It offers MyPack Home (to the door) and MyPack
 /// Collect (a service point the customer chooses from those nearest their address — `PickupPoints`), at the prices you set —
 /// PostNord's API does not quote consumer prices, which depend on your agreement. When the goods go out, `Ship` books
 /// the parcel and answers its tracking number, its tracking link and its PDF label.

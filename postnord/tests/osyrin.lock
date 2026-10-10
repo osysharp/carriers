@@ -2,37 +2,7 @@
   "platform": {
     "version": "0.9.0"
   },
-  "entries": [
-    {
-      "name": "Osysharp.Carriers.PostNord",
-      "kind": "package",
-      "version": "0.1.1",
-      "hash": "sha256:1ddefd67a8bf76c1857bda63153b6dfcbd2a0507d4447effe98b5cff0647b8f6",
-      "minPlatform": "0.9.0",
-      "shadow": "app-forkable",
-      "source": "workspace:kits/postnord",
-      "constraint": "0"
-    },
-    {
-      "name": "Osysharp.Http",
-      "kind": "package",
-      "version": "1.0.0",
-      "hash": "sha256:4c24068aeea5ef1a155459d4cc332c85d7ee3d96049f2404e54ac860d94beb0f",
-      "minPlatform": "0.9.0",
-      "shadow": "app-forkable",
-      "source": "workspace:Platform.Core/Dsl/OsySharp/Baseline/Capabilities/Http"
-    },
-    {
-      "name": "Osysharp.Delivery",
-      "kind": "package",
-      "version": "0.1.1",
-      "hash": "sha256:cd33e075ba5ba55035eb238927ec9cbb80845dec22de08b0f5a7792cdeea3034",
-      "minPlatform": "0.9.0",
-      "shadow": "app-forkable",
-      "source": "workspace:kits/delivery",
-      "constraint": "0"
-    }
-  ],
+  "entries": [],
   "bridges": {
     "searched": [
       "workspace",

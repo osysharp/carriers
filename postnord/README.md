@@ -5,14 +5,14 @@
 You send parcels in the Nordics with PostNord and want the shop to book them, print the label and follow the parcel
 without anyone retyping an address. This package books a parcel and answers its PDF label, tracking number and
 tracking link; reads where a parcel is; and finds the service points nearest an address. It also plugs straight into
-any app built on the `Osysharp.Delivery` contract — the shop kit, for one — as a delivery provider.
+any app built on the `Osysharp.Shipping` contract — the shop kit, for one — as a delivery provider.
 
 ## Install and use
 
 ```osy
 app MyShop {
   use Osysharp.Carriers.PostNord@0 { egress "api2.postnord.com"; }
-  use Osysharp.Delivery@0;
+  use Osysharp.Shipping@0;
   use Osysharp.Http;
 }
 ```

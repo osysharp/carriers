@@ -1,6 +1,6 @@
 namespace Osysharp.Carriers.PostNord;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 using Osysharp.Http;
 
 /// A party on a PostNord booking — the sender or the recipient.

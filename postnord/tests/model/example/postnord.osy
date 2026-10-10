@@ -1,7 +1,7 @@
 // EXAMPLE — the smallest working shape of PostNord in an app: the client with its key, a booking, and the
 // same key as a delivery provider. osyrin.com/integrations/ shows this file; it compiles with the kit's test app.
 using Osysharp.Carriers.PostNord;
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 // The key from PostNord's developer portal. It travels as the `apikey` query parameter.
 app.Secrets = [ new Secret("PostNordApiKey") ];
@@ -27,7 +27,7 @@ PostNordLabel BookParcel(string reference, PostNordParty recipient, int weightGr
 /// Where is it now? The label's ItemId is what you ask about.
 PostNordTrackedShipment? WhereIs(string itemId) { return PostNord().Track(itemId); }
 
-/// …or as a delivery provider beside any other, for an app on the Osysharp.Delivery contract —
+/// …or as a delivery provider beside any other, for an app on the Osysharp.Shipping contract —
 /// the shop kit, for one. Prices are yours: PostNord's API does not quote consumer prices.
 List<IDeliveryProvider> Carriers() {
   return [ new PostNordDelivery {
