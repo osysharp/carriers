@@ -1,7 +1,7 @@
 // A pickup through Sendcloud: the carrier comes to the shop in the day's window.
 namespace Osysharp.Carriers.Sendcloud.Pickups;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// Books `carrierCode` to come on the request's day, 09:00–17:00 UTC. Sendcloud answers `ANNOUNCING` until the carrier
 /// confirms; the reference is Sendcloud's id for it.

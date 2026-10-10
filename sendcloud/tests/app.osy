@@ -2,6 +2,6 @@
 app SendcloudKitTests {
   tests "**/*.test.osy";
   use Osysharp.Carriers.Sendcloud@0 { egress "panel.sendcloud.sc"; }
-  use Osysharp.Delivery@0;
+  use Osysharp.Shipping@0;
   use Osysharp.Http;
 }

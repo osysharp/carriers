@@ -1,6 +1,6 @@
 namespace Osysharp.Carriers.Sendcloud;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// One way to deliver that the shop offers through Sendcloud: a carrier's shipping option, at the shop's price.
 public class SendcloudOption {
@@ -23,7 +23,7 @@ public class SendcloudOption {
   public int AgeCheck = 0;
 }
 
-/// Sendcloud as a way to deliver, under the `Osysharp.Delivery` contract. It offers the carriers' options the shop
+/// Sendcloud as a way to deliver, under the `Osysharp.Shipping` contract. It offers the carriers' options the shop
 /// lists, at the shop's prices; sending an order announces the parcel with Sendcloud and answers its tracking number,
 /// link and PDF label; a parcel leaving the EU carries its customs lines. Returns, pickups and tracking go through the
 /// same account.

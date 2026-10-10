@@ -1,7 +1,7 @@
 // A return through Sendcloud: from the customer to the shop, with a label to print.
 namespace Osysharp.Carriers.Sendcloud.Returns;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// Announces the return with `optionCode`. Sendcloud answers only its ids, so the label is fetched from the documents
 /// API; the tracking number reaches the shop with the parcel's events.

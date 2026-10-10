@@ -1,7 +1,7 @@
 # Osysharp.Carriers.Sendcloud
 
 Many European carriers behind one integration — DHL, DPD, GLS, UPS, PostNL, Colissimo and more — through
-[Sendcloud](https://www.sendcloud.com)'s API v3. A delivery provider under [Osysharp.Delivery](https://osyrin.com/templates/kits/delivery/), so a shop
+[Sendcloud](https://www.sendcloud.com)'s API v3. A delivery provider under [Osysharp.Shipping](https://osyrin.com/templates/kits/shipping/), so a shop
 lists it beside any other way to deliver.
 
 - **Labels** — sending an order announces the parcel and answers its tracking number, tracking link and PDF label.

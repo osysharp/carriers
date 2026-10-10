@@ -1,7 +1,7 @@
 // Where a parcel is, and the events Sendcloud sends — both in the contract's words.
 namespace Osysharp.Carriers.Sendcloud.Tracking;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// The newest event decides: its phase, or its exception when the phase is `none`.
 public TrackingStatus TrackWithSendcloud(string publicKey, string secretKey, string trackingNumber) {

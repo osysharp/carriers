@@ -1,6 +1,6 @@
 // Sendcloud as a delivery provider, against a stubbed Sendcloud: the requests it sends, and how it reads the answers.
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 using Osysharp.Http;
 using Osysharp.Carriers.Sendcloud;
 

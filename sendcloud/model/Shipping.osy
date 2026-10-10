@@ -1,7 +1,7 @@
 // The contract's shipment, sent through Sendcloud's generated Shipments client — and its answer read back.
 namespace Osysharp.Carriers.Sendcloud.Shipments;
 
-using Osysharp.Delivery;
+using Osysharp.Shipping;
 
 /// Announces one parcel with the shipping option `optionCode`; answers its tracking number, link and PDF label.
 /// ⚠ Sendcloud answers a carrier's refusal with 201 and the reason in `errors` — so the answer is always read.
